@@ -1,13 +1,7 @@
 # RL_Hex_game
 
-This is a pull request test. 
+This project aims to implement a reinforcement learning agent to play the game of Hex. It has three main components:
 
-## Standard procedure
-
-1. Fork the repository on GitHub.
-2. Clone the forked repository to your local machine.
-3. Create a new branch for your changes.
-4. Make your changes and commit them with a descriptive message.
-5. Push your changes to your forked repository.
-6. Open a pull request to the original repository.
-7. Wait for feedback and make any necessary changes.
+1. Frontend: A graphical user interface (GUI) for the game, built using React.
+2. Backend: A server that handles the game logic and communicates with the frontend, built using dajango.
+3. Reinforcement Learning Agent: An agent that learns to play the game using reinforcement learning techniques, built using PyTorch. Similar to katago
