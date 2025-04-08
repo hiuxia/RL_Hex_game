@@ -28,7 +28,20 @@ class SelfPlay:
         self.model = model
         self.buffer = buffer
         self.device = device
-        #self.env = HexGame() 
+        self.env = HexGame()
+
+    def preprocess_input(self, input):
+        """同algorithm"""
+        board = np.array(input["board"])
+        current_player = 2*(-board.sum()+0.5) #check current player
+        input_tensor = np.zeros((2, 11, 11), dtype=np.float32)
+        input_tensor[0] = (board * current_player).astype(np.float32)  # Current player
+        #print ("current:",input_tensor[0])
+        input_tensor[1] = (np.array(input["last_moves"])).astype(np.float32)  # opponent player#考虑改为最后动作
+        #print ("opponent:",input_tensor[1])
+        #print(np.where("board" == 0))
+        return torch.from_numpy(input_tensor).unsqueeze(0)  # 添加batch维度
+    
     def generate_game(self):
         # 初始化环境
         self.env.reset()
@@ -36,18 +49,12 @@ class SelfPlay:
         
         while not self.env.is_terminal():
             # 获取当前状态
-            current_board = self.env.get_board()
-            last_moves = self.env.get_last_moves()  # 假设环境提供此方法
-            
+            input = self.env.output()
             # 动态计算合法动作（所有空位置）
-            legal_moves = np.argwhere(current_board == 0).tolist()  # [(x1,y1), (x2,y2), ...]
+            legal_moves = np.argwhere(np.array(input["board"]) == 0).tolist()  # [(x1,y1), (x2,y2), ...]
             
             # 预处理输入
-            input_tensor = self.preprocess_input({
-                "board": current_board,
-                "last_moves": last_moves,
-                "player_turn": "AI"  # 训练时忽略此字段
-            })
+            input_tensor = self.preprocess_input(input)
             
             # 模型预测
             with torch.no_grad():
@@ -55,7 +62,7 @@ class SelfPlay:
             
             # 生成动作概率（仅合法位置）
             policy_probs = torch.softmax(policy_logits, dim=-1).squeeze().numpy()
-            legal_indices = [x*11 + y for (x,y) in legal_moves]
+            legal_indices = [lst[0]*11 + lst[1] for lst in legal_moves]
             legal_probs = policy_probs[legal_indices]
             legal_probs /= legal_probs.sum()  # 重新归一化
             
@@ -68,7 +75,6 @@ class SelfPlay:
             game_history.append((input_tensor, legal_probs, value))
         
         # 生成终局棋谱
-        final_board = self.env.get_board()
-        final_last_moves = self.env.get_last_moves()
+        final_board = self.env.output()["board"]
         return game_history, final_board, final_last_moves
 
