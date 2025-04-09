@@ -7,7 +7,7 @@ import random
 # ======================
 # 1. 神经网络模型定义
 # ======================
-class HexModel(nn.Module):
+class HexNet(nn.Module):
     """Hex策略-价值网络 (兼容AlphaZero架构)"""
     def __init__(self, board_size=11, num_channels=256, num_res_blocks=4):
         super().__init__()
