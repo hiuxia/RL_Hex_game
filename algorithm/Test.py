@@ -1,11 +1,13 @@
+from Algorithm import HexAI
+
 hex_ai = HexAI()
 
 # 模拟后端输入
 input_data = {
-    "board": [[0]*11 for _ in range(11)],  # 空棋盘
+    "board": [[0] * 11 for _ in range(11)],  # 空棋盘
     "player_turn": "AI",
     "last_moves": [],
-    "legal_moves": [(x, y) for x in range(11) for y in range(11)]  # 所有位置合法
+    "legal_moves": [(x, y) for x in range(11) for y in range(11)],  # 所有位置合法
 }
 
 # 调用预测函数

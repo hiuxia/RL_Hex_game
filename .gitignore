@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -96,9 +95,7 @@ Desktop.ini
 
 # Virtual environment
 .venv/
-=======
 __pycache__/
 *.py[cod]
 __pycache__/
 *.py[cod]
->>>>>>> backend
