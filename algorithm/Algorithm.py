@@ -7,10 +7,11 @@ class HexAI:
     def __init__(self, model_path=None):
         # 初始化模型（当前可以是随机策略，未来替换为训练后的模型）
         self.model = self.load_model(model_path) if model_path else None
+        
 
     def load_model(self, model_path):
         """加载训练好的PyTorch模型"""
-        model = HexNet  # Model Seleciton
+        model = HexNet()  # Model Seleciton
         model.load_state_dict(torch.load(model_path))
         model.eval()
         return model
@@ -18,11 +19,15 @@ class HexAI:
     def preprocess_input(self, input):
         """将输入字典转换为模型需要的张量格式"""
         board = np.array(input["board"])
-        current_player = 2*(-board.sum()+0.5) #check current player
+        last_moves = np.array(input["last_moves"])
+        current_player = 2*(-board.sum()+0.5)[0][0] #check current player
+        if current_player == -1:
+            board = -1 * board.T
+            last_moves = last_moves.T
         input_tensor = np.zeros((2, 11, 11), dtype=np.float32)
-        input_tensor[0] = (board * current_player).astype(np.float32)  # Current player
+        input_tensor[0] = (board).astype(np.float32)  # Current player
         #print ("current:",input_tensor[0])
-        input_tensor[1] = (np.array(input["last_moves"])).astype(np.float32)  # opponent player#考虑改为最后动作
+        input_tensor[1] = (last_moves).astype(np.float32)  # opponent player#考虑改为最后动作
         #print ("opponent:",input_tensor[1])
         #print(np.where("board" == 0))
         return torch.from_numpy(input_tensor).unsqueeze(0)  # 添加batch维度
@@ -38,7 +43,7 @@ class HexAI:
         if self.model:
             with torch.no_grad():
                 policy_logits, value = self.model(input_tensor)
-            move_probs = torch.softmax(policy_logits, dim=-1).numpy().flatten()
+            move_probs = torch.softmax(policy_logits, dim=-1).cpu().numpy().flatten()
         else:
             # 若无模型，随机选择合法动作
             move_probs = np.ones(np.shape(np.array(input_dict["board"]))).flatten() / len(legal_moves)
