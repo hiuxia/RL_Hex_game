@@ -1,9 +1,10 @@
 import torch
 import numpy as np
 from collections import deque
+from torch.utils.data import Dataset, DataLoader
 import random
 from .GameLogic import HexGame #这里不用relative import反而会在运行train.py的时候报错
-from .MCTS import MCTS
+from .MCTS import MCTS #这里不用relative import反而会在运行train.py的时候报错
 
 class ReplayBuffer:
     def __init__(self, capacity=100000):
@@ -17,6 +18,25 @@ class ReplayBuffer:
     
     def __len__(self):
         return len(self.buffer)
+
+class ReplayDataset(Dataset):
+    def __init__(self, buffer):
+        # 确保 buffer.buffer 是 deque 或可索引对象
+        self.buffer = list(buffer.buffer)  # 将 deque 转换为 list
+    
+    def __len__(self):
+        return len(self.buffer)
+    
+    def __getitem__(self, idx):
+        data = self.buffer[idx]
+        state = data["state"].squeeze(0)  # 形状 [2,11,11]
+        policy = data["policy"]           # 形状 [11,11]
+        value = data["value"]
+        return {
+            "state": torch.FloatTensor(state),  # 确保转换为 Tensor
+            "policy": torch.FloatTensor(policy),
+            "value": torch.FloatTensor([value])
+        }
 
 class SelfPlay:
     def __init__(self, model, buffer, device):
@@ -92,7 +112,7 @@ class SelfPlay:
             action = actions[np.random.choice(len(actions), p=probs)]
             # 执行动作
             current_state = self.env.output()
-            current_player = 2*(np.array(current_state["board"])+0.5)[0][0]
+            current_player = 2*(np.sum(np.array(current_state["board"])+0.5))
             self.env.make_move(action[0], action[1])
             #print("-------------------------------")###################
             #print(np.array(current_state["board"]))####################

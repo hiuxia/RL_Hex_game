@@ -10,9 +10,8 @@ class HexAI:
         
 
     def load_model(self, model_path):
-        """加载训练好的PyTorch模型"""
         model = HexNet()  # Model Seleciton
-        model.load_state_dict(torch.load(model_path))
+        model.load_state_dict(torch.load(model_path)["model_state"])
         model.eval()
         return model
 
@@ -20,7 +19,7 @@ class HexAI:
         """将输入字典转换为模型需要的张量格式"""
         board = np.array(input["board"])
         last_moves = np.array(input["last_moves"])
-        current_player = 2*(-board.sum()+0.5)[0][0] #check current player
+        current_player = 2*(-np.sum(board)+0.5) #check current player
         if current_player == -1:
             board = -1 * board.T
             last_moves = last_moves.T
@@ -80,7 +79,7 @@ class HexAI:
 
 
 
-hex_ai = HexAI()
+hex_ai = HexAI(model_path="./py_checkpoints/Latest_model.pth")############################ ←这里输入模型路径 MODEL PATH HERE
 
 # 模拟后端输入
 input_data = {

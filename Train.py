@@ -1,58 +1,24 @@
 import torch
 import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
 import numpy as np
 import os
 from Algorithm.Hexmodel import HexNet
-from Algorithm.Selfplay import SelfPlay, ReplayBuffer
+from Algorithm.Selfplay import SelfPlay, ReplayBuffer,ReplayDataset
 
 class Trainer:
-    def __init__(self, model, buffer, self_play, save_dir="checkpoints", device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
+    def __init__(self, model, buffer, self_play, save_dir="py_checkpoints", device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),num_workers=4):
         self.model = model
         self.buffer = buffer
         self.self_play = self_play
         self.save_dir = save_dir
         self.device = device
         self.optimizer = optim.Adam(model.parameters(), lr=0.001)
+        self.num_workers = num_workers  # 新增
         os.makedirs(save_dir, exist_ok=True)
-    '''
-    def train_step(self, batch_size=512):
-        if len(self.buffer) < batch_size:
-            return None
-
-        batch = self.buffer.sample(batch_size)
-        states, policies, values = zip(*batch)
-        print("Policies: ",  policies)########################
-        policies = [
-        torch.from_numpy(policies).float().to(self.device)  # 关键转换
-        for data in batch
-        ]
-        values = [
-        torch.tensor(values, dtype=torch.float32).to(self.device)
-        for data in batch
-        ]
-        states = torch.stack(states).to(self.device)
-        policies = torch.stack(policies)#.to(self.device)
-        values = torch.stack(values).to(self.device)
-        states = [data["state"] for data in batch]
-        policies = [data["policy"] for data in batch]
-        values = [data["value"] for data in batch]
-
-
-        pred_policies, pred_values = self.model(states)
-        policy_loss = nn.CrossEntropyLoss()(pred_policies, policies)
-        value_loss = nn.MSELoss()(pred_values.squeeze(), values)
-        total_loss = policy_loss + value_loss
-
-        self.optimizer.zero_grad()
-        total_loss.backward()
-        self.optimizer.step()
-
-        return {
-            "total_loss": total_loss.item(),
-            "policy_loss": policy_loss.item(),
-           "value_loss": value_loss.item()
-        }
+        self.dataset = None
+        self.dataloader = None
     '''
     def train_step(self, batch_size=256): 
         #print("train step 1: len(self.buffer) = ",len(self.buffer))#######################
@@ -82,6 +48,56 @@ class Trainer:
             "total_loss": total_loss.item(),
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item()
+        }'''
+    def train_step(self, batch_size=1):
+        if len(self.buffer) < batch_size:
+            print(f"size = {len(self.buffer)} Too small, Not Considered")
+            return None
+        
+        # DataLoader
+        #print(self.num_workers)
+        if self.dataset is None or len(self.dataset) != len(self.buffer):
+            self.dataset = ReplayDataset(self.buffer)
+            self.dataloader = DataLoader(
+                self.dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                num_workers=self.num_workers,
+                pin_memory=True
+            )
+        
+        try:
+            batch = next(iter(self.dataloader))
+        except StopIteration:
+            self.dataloader = DataLoader(
+                self.dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                num_workers=self.num_workers,
+                pin_memory=True
+            )
+            batch = next(iter(self.dataloader))
+        
+        # 提取数据并传输到设备
+        states = batch["state"].to(self.device, non_blocking=True)
+        policies = batch["policy"].view(-1, 11*11).to(self.device, non_blocking=True)
+        values = batch["value"].to(self.device, non_blocking=True)
+        
+        # 模型前向和损失计算（保持不变）
+        pred_policies, pred_values = self.model(states)
+        policy_loss = nn.KLDivLoss(reduction='batchmean')(pred_policies.log_softmax(dim=-1), policies)#KL-Divergence LOSS
+        value_loss = nn.MSELoss()(pred_values.squeeze(), values.squeeze())#MSE LOSS
+        total_loss = policy_loss + value_loss
+        
+        # 反向传播
+        self.optimizer.zero_grad()
+        total_loss.backward()
+        self.optimizer.step()
+        
+        return {
+            "total_loss": total_loss.item(),
+            "policy_loss": policy_loss.item(),
+            "value_loss": value_loss.item()
         }
 
     def save_replay(self, board, last_moves, game_id):
@@ -105,9 +121,10 @@ class Trainer:
             #print("GAME: ",game_id," Processe01 PASSED")###############
             self.buffer.add(game_data)
             #print("GAME: ",game_id," Processe02 PASSED")################
+            #print(f"Buffer size: {len(self.buffer)}") 
             if game_id % 100 == 0:
                 self.save_replay(final_board, final_last_moves, game_id)
-            metrics = self.train_step(batch_size=512)
+            metrics = self.train_step()
             #print("GAME: ",game_id," Processe03 PASSED")###############
             #print(len(self.buffer))
             if metrics:
@@ -132,18 +149,21 @@ def main():
         model=model,
         buffer=buffer,
         self_play=self_play,
-        save_dir="./checkpoints",
-        device=device
+        save_dir="./py_checkpoints",
+        device=device,
+        num_workers= 4
     )
     print("<------------------------------------ENVIRONMENT SETTED------------------------------------------->")
     start_game_id = 0
-    checkpoint_path = "./checkpoints/latest_model.pth"
+    checkpoint_path = "./py_checkpoints/latest_model.pth"
     if os.path.exists(checkpoint_path):
         checkpoint = torch.load(checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint["model_state"])
         trainer.optimizer.load_state_dict(checkpoint["optimizer_state"])
         start_game_id = checkpoint["game_id"]
-        print(f"已从游戏 {start_game_id} 恢复训练")
+        print("Recovered from: model ",start_game_id)
+    else:
+        print("No games Recovered")
     print("<--------------------------------------START TRAINING--------------------------------------------->")
     ###############################################################################################################
     trainer.train(start_id=start_game_id,total_games=300) #########################################################
@@ -151,5 +171,5 @@ def main():
     print("<------------------------------------TRAINING COMPLETED------------------------------------------->")
 
 if __name__ == "__main__":
-    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs("py_checkpoints", exist_ok=True)
     main()
