@@ -48,9 +48,9 @@ class SelfPlay:
     def preprocess_input(self, state_dict):
         board = np.array(state_dict["board"], dtype=np.float32)
         last_moves = np.array(state_dict["last_moves"], dtype=np.float32)
-        input_np = np.stack([board, last_moves], axis=0)  # 形状 (2,11,11)
-        input_tensor = torch.tensor(input_np, dtype=torch.float32)  # 直接保存为张量
-        return input_tensor.unsqueeze(0)  # 形状 (1,2,11,11)"""
+        input_np = np.stack([board, last_moves], axis=0)  # shape(2,11,11)
+        input_tensor = torch.tensor(input_np, dtype=torch.float32)  # tensor
+        return input_tensor.unsqueeze(0)  # shape(1,2,11,11)"""
     
     def preprocess_input(self, state_dict):
         board = np.array(state_dict["board"], dtype=np.float32)
@@ -58,7 +58,7 @@ class SelfPlay:
         if self.env.current_player == -1 and np.sum(board) == 1: #make sure the board is filpped
             board = -1 * board.T  # Flip the board
             last_moves = last_moves.T  # Flip the board
-        input_np = np.stack([board, last_moves], axis=0)  # (2,11,11)
+        input_np = np.stack([board, last_moves], axis=0)  #shape(2,11,11)
         return torch.tensor(input_np, dtype=torch.float32).unsqueeze(0)
 
     def generate_game(self):
@@ -112,7 +112,7 @@ class SelfPlay:
             action = actions[np.random.choice(len(actions), p=probs)]
             # 执行动作
             current_state = self.env.output()
-            current_player = 2*(np.sum(np.array(current_state["board"])+0.5))
+            current_player = 2*(np.sum(np.array(current_state["board"]))+0.5)
             self.env.make_move(action[0], action[1])
             #print("-------------------------------")###################
             #print(np.array(current_state["board"]))####################
