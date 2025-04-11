@@ -14,7 +14,7 @@ class Trainer:
         self.self_play = self_play
         self.save_dir = save_dir
         self.device = device
-        self.optimizer = optim.Adam(model.parameters(), lr=0.001)
+        self.optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4) #in case of overfitting
         self.num_workers = num_workers  # 新增
         os.makedirs(save_dir, exist_ok=True)
         self.dataset = None
