@@ -5,7 +5,6 @@ from Hexmodel import HexNet
 
 class HexAI:
     def __init__(self, model_path=None):
-        # 初始化模型（当前可以是随机策略，未来替换为训练后的模型）
         self.model = self.load_model(model_path) if model_path else None
         
 
@@ -16,33 +15,33 @@ class HexAI:
         return model
 
     def preprocess_input(self, input):
-        """将输入字典转换为模型需要的张量格式"""
+        #Dict -> Tensor
         board = np.array(input["board"])
         last_moves = np.array(input["last_moves"])
-        current_player = 2*(-np.sum(board)+0.5) #check current player
+        current_player = 2*(-1*np.sum(board)+0.5) #check current player
         if current_player == -1:
             board = -1 * board.T
             last_moves = last_moves.T
         input_tensor = np.zeros((2, 11, 11), dtype=np.float32)
+        print(current_player)
         input_tensor[0] = (board).astype(np.float32)  # Current player
         #print ("current:",input_tensor[0])
         input_tensor[1] = (last_moves).astype(np.float32)  # opponent player#考虑改为最后动作
         #print ("opponent:",input_tensor[1])
         #print(np.where("board" == 0))
-        return torch.from_numpy(input_tensor).unsqueeze(0)  # 添加batch维度
+        return current_player, torch.from_numpy(input_tensor).unsqueeze(0)  # 添加batch维度
         
 
     def predict(self, input_dict):
-        """核心逻辑：生成最优动作和胜率"""
-        # 1. 预处理输入数据
-        input_tensor = self.preprocess_input(input_dict)
+        # Preprocess
+        current_player, input_tensor = self.preprocess_input(input_dict)
+        #print(current_player)
         legal_moves = np.argwhere(np.array(input_dict["board"])==0).tolist()
         #print(np.argwhere(np.array(input_dict["board"])==0).tolist())
-        # 2. 调用模型预测（此处以随机动作为例，未来替换为模型推理）
         if self.model:
             with torch.no_grad():
                 policy_logits, value = self.model(input_tensor)
-            move_probs = torch.softmax(policy_logits, dim=-1).cpu().numpy().flatten()
+            move_probs = torch.softmax(policy_logits, dim=-1).cpu().numpy().flatten() if current_player == 1 else (torch.softmax(policy_logits, dim=-1).cpu().numpy()).reshape(11,11).T.flatten()
         else:
             # Random Action If no model selected
             move_probs = np.ones(np.shape(np.array(input_dict["board"]))).flatten() / len(legal_moves)
@@ -57,53 +56,37 @@ class HexAI:
         legal_probs = move_probs[legal_indices]
         optimal_idx = np.argmax(legal_probs)
         optimal_move = legal_moves[optimal_idx]
-
-        # 4. 胜率计算（此处假设value为AI的胜率）
-        winning_rate = (value.item()+1)/2 if self.model else 0.5  # 0.5 if no model selected
-     
-
-        return {
-            "optimal_move": optimal_move,
-            "winning_rate": round(winning_rate, 2)
-        }
-
-    # @staticmethod
-    #def coord_to_index(list):
-    #    """将坐标(x,y)转换为模型输出的索引（假设模型输出为11x11的展平概率）"""
-    #    return list[0] * 11 + list[1]
+        winning_rate = (value.item()+1)/2 if self.model else 0.5  #[-1,1]->[0,1], 0.5 if no model selected
+        return {"optimal_move": optimal_move,"winning_rate": round(winning_rate, 2)}
 
 
-
-
-
-
-hex_ai = HexAI(model_path="./py_checkpoints/model100_demo.pth")############################ ←这里输入模型路径 MODEL PATH HERE
+hex_ai = HexAI(model_path="./py_checkpoints/model50.pth")############################ ←这里输入模型路径 MODEL PATH HERE
 
 # 模拟后端输入
 input_data = {
-    "board": [[1, -1, 1, -1, 0, 0, 0, 0, 0, 0, 0],
+    "board": [[1, -1, 1, -1, 1, 0, 0, 0, 0, 0, 0],
             [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 1, 0, 0, 0, 0, 0, -1, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],  
+            [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]],  
     "player_turn": "AI",
-    "last_moves": [[1, 4, 3, 2, 0, 0, 0, 0, 0, 0, 0],
-            [0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "last_moves": [[1, 4, 3, 2, 11, 0, 0, 0, 0, 0, 0],
+            [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 9, 0, 0, 0, 0, 0, 8, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+            [0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
     #"legal_moves": [(x, y) for x in range(11) for y in range(11)]  # 所有位置合法
 }
 
