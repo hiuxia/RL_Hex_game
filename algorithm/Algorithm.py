@@ -44,13 +44,11 @@ class HexAI:
                 policy_logits, value = self.model(input_tensor)
             move_probs = torch.softmax(policy_logits, dim=-1).cpu().numpy().flatten()
         else:
-            # 若无模型，随机选择合法动作
+            # Random Action If no model selected
             move_probs = np.ones(np.shape(np.array(input_dict["board"]))).flatten() / len(legal_moves)
             #print(np.shape(np.array(input_dict["board"])))
             #print(move_probs)
             print("Notice: No model selected.")
-
-        # 3. 过滤合法动作的概率
         #print(list(range(len(legal_moves))))
         legal_indices = [lst[0]*11 + lst[1] for lst in legal_moves]
         #legal_indices = list(range(len(legal_moves)))
@@ -61,7 +59,7 @@ class HexAI:
         optimal_move = legal_moves[optimal_idx]
 
         # 4. 胜率计算（此处假设value为AI的胜率）
-        winning_rate = value.item() if self.model else 0.5  # 若无模型，假设AI胜率75%
+        winning_rate = (value.item()+1)/2 if self.model else 0.5  # 0.5 if no model selected
      
 
         return {
@@ -79,7 +77,7 @@ class HexAI:
 
 
 
-hex_ai = HexAI(model_path="./py_checkpoints/Latest_model.pth")############################ ←这里输入模型路径 MODEL PATH HERE
+hex_ai = HexAI(model_path="./py_checkpoints/model100_demo.pth")############################ ←这里输入模型路径 MODEL PATH HERE
 
 # 模拟后端输入
 input_data = {
