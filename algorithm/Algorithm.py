@@ -23,7 +23,7 @@ class HexAI:
             board = -1 * board.T
             last_moves = last_moves.T
         input_tensor = np.zeros((2, 11, 11), dtype=np.float32)
-        print(current_player)
+        #print(current_player)
         input_tensor[0] = (board).astype(np.float32)  # Current player
         #print ("current:",input_tensor[0])
         input_tensor[1] = (last_moves).astype(np.float32)  # opponent player#考虑改为最后动作
@@ -36,7 +36,7 @@ class HexAI:
         # Preprocess
         current_player, input_tensor = self.preprocess_input(input_dict)
         #print(current_player)
-        legal_moves = np.argwhere(np.array(input_dict["board"])==0).tolist()
+        legal_moves = np.argwhere(np.array(input_dict["board"])==0).tolist() if current_player == 1 else np.argwhere(np.array(input_dict["board"]).T==0).tolist()
         #print(np.argwhere(np.array(input_dict["board"])==0).tolist())
         if self.model:
             with torch.no_grad():
@@ -49,7 +49,8 @@ class HexAI:
             #print(move_probs)
             print("Notice: No model selected.")
         #print(list(range(len(legal_moves))))
-        legal_indices = [lst[0]*11 + lst[1] for lst in legal_moves]
+        #print(legal_moves)
+        legal_indices = [lst[0]*11 + lst[1] for lst in legal_moves] #if current_player == 1 else [lst[1]*11 + lst[0] for lst in legal_moves]
         #legal_indices = list(range(len(legal_moves)))
         #print(legal_indices)
         #######################################待更改：把输出最高prob改成输出top3
@@ -60,11 +61,11 @@ class HexAI:
         return {"optimal_move": optimal_move,"winning_rate": round(winning_rate, 2)}
 
 
-hex_ai = HexAI(model_path="./py_checkpoints/model50.pth")############################ ←这里输入模型路径 MODEL PATH HERE
+hex_ai = HexAI(model_path="./py_checkpoints/model200.pth")############################ ←这里输入模型路径 MODEL PATH HERE
 
 # 模拟后端输入
 input_data = {
-    "board": [[1, -1, 1, -1, 1, 0, 0, 0, 0, 0, 0],
+    "board": [[1, -1, 1, -1, 1, 0, -1, 1, 0, 0, 0],
             [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             [0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -76,7 +77,7 @@ input_data = {
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]],  
     "player_turn": "AI",
-    "last_moves": [[1, 4, 3, 2, 11, 0, 0, 0, 0, 0, 0],
+    "last_moves": [[1, 4, 3, 2, 11, 0, 12, 13, 0, 0, 0],
             [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             [0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0],
