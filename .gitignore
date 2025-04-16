@@ -115,5 +115,3 @@ cdk.out/
 
 # scripts
 *.pdf
-repo2pdf.js
-repo2pdf.md

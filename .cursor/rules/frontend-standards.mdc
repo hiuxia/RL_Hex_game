@@ -1,0 +1,38 @@
+---
+description: 
+globs: hex-ai-frontend/src/**
+alwaysApply: false
+---
+---
+description: "Standards and guidelines for frontend development using Next.js, React, TypeScript, Zustand, and Tailwind."
+globs: ["hex-ai-frontend/src/**"] # Apply when working within the frontend source directory
+alwaysApply: false # Auto Attached based on file context
+---
+
+# Frontend Standards (Next.js/React/TypeScript)
+
+When working within `hex-ai-frontend/src/`:
+
+-   **Framework:** Use Next.js 13+ with the App Router. Components should be functional components using React Hooks.
+-   **Language:** Use TypeScript. Employ strong typing and interfaces/types defined in `@./hex-ai-frontend/src/types/hexProps.ts` where applicable.
+-   **State Management:**
+    -   Global game state MUST be managed via the Zustand store defined in `@./hex-ai-frontend/src/store/gameStore.ts`.
+    -   Access state using the `useGameStore` hook.
+    -   State updates related to game logic should primarily occur within `handleGameStateUpdate` based on WebSocket messages.
+    -   Actions triggering backend communication (e.g., `requestMove`) are defined in the store and use the `sendMessage` function provided by the WebSocket hook.
+-   **Styling:** Use Tailwind CSS utility classes directly. Refer to `@./hex-ai-frontend/tailwind.config.ts`. Use `clsx` or similar for conditional classes if needed.
+-   **Component Structure:** Organize components logically under `@./hex-ai-frontend/src/components/` by feature (dashboard, hex, replay, settings, ui). Use the template provided in `@./.cursor/rules/react_component_template.mdc` for new components.
+-   **WebSocket Interaction:**
+    -   Managed by the `@./hex-ai-frontend/src/hooks/useGameWebSocket.ts` hook.
+    -   The `GamePage` (`@./hex-ai-frontend/src/app/(app)/game/[gameId]/page.tsx`) is responsible for initializing the hook and passing `sendMessage` to the Zustand store.
+-   **Coordinate System:**
+    -   **CRITICAL:** The frontend uses **Cube Coordinates** (`{q, r, s}`) for internal logic and rendering (`@./hex-ai-frontend/src/lib/coordinates.ts`).
+    -   The backend uses **XY Coordinates** (likely row, column indices).
+    -   **MUST** use the conversion functions in `@./hex-ai-frontend/src/lib/coordinates.ts` (`cubeToXY`, `xyToCube`) for any communication with the backend involving board positions. See `coordinate-system.mdc` for details.
+-   **Key Files:**
+    -   Game State: `@./hex-ai-frontend/src/store/gameStore.ts`
+    -   WebSocket Hook: `@./hex-ai-frontend/src/hooks/useGameWebSocket.ts`
+    -   Coordinate Logic: `@./hex-ai-frontend/src/lib/coordinates.ts`
+    -   Main Game UI: `@./hex-ai-frontend/src/app/(app)/game/[gameId]/page.tsx`
+    -   Board Rendering: `@./hex-ai-frontend/src/components/hex/HexBoard.tsx`
+-   **Refactoring Goal:** Be aware that game logic (validation, win checks) is planned to move _to_ the frontend (likely into `gameStore.ts` or related utilities). New code should anticipate or facilitate this where appropriate. See `refactoring-goals.mdc`.

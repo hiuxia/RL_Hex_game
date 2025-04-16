@@ -1,0 +1,31 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+---
+description: "Crucial details about the different coordinate systems used in the frontend and backend."
+alwaysApply: true
+---
+
+# Coordinate System Handling (CRITICAL)
+
+This project uses **two different coordinate systems** for the Hex board, and correct conversion is essential for functionality.
+
+1.  **Frontend (Cube Coordinates):**
+    * Used for internal logic, rendering (SVG), and click handling within the React components (`@./hex-ai-frontend/src/`).
+    * Format: `{ q: number, r: number, s: number }` where `q + r + s = 0`.
+    * Primary utility file: `@./hex-ai-frontend/src/lib/coordinates.ts`. Contains functions like `cubeToPixelPointy`, `pixelToHex`, `cubeRound`, `cubeToKey`.
+
+2.  **Backend (XY Coordinates):**
+    * Used in the Django models (`models.py` board representation), consumers (`consumers.py` move actions), and potentially the RL agent's internal representation.
+    * Format: `{ x: number, y: number }`. **Assumption:** Based on typical 2D array indexing in Python/Django, `x` likely represents the **row index** and `y` the **column index**. *This MUST be verified against the backend implementation.*
+
+## Conversion
+
+-   **Frontend -> Backend:** When sending a move action via WebSocket, the frontend **MUST** convert its internal Cube Coordinates to the backend's XY format using `cubeToXY(coords)` from `@./hex-ai-frontend/src/lib/coordinates.ts`.
+-   **Backend -> Frontend:** When the frontend receives game state (`board`, `moves_history`) containing XY coordinates from the backend, it **MUST** convert them to Cube Coordinates for internal use (e.g., updating `boardState` map, highlighting last move) using `xyToCube(x, y)` from `@./hex-ai-frontend/src/lib/coordinates.ts`.
+
+**Key File:** `@./hex-ai-frontend/src/lib/coordinates.ts`
+
+**WARNING:** Any mismatch or incorrect implementation of these conversion functions (`cubeToXY`, `xyToCube`) will lead to incorrect move placements, state updates, and highlighting. Ensure the logic in `coordinates.ts` accurately reflects the backend's interpretation of `x` and `y`.

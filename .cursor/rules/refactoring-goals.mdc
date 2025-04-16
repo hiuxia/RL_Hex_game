@@ -1,0 +1,47 @@
+---
+description: "Outlines key planned refactoring efforts and architectural changes for the project, guiding AI assistance towards these goals. Goals are listed in priority order."
+alwaysApply: false # Agent Requested or Manual (Useful when discussing future changes or refactoring tasks)
+---
+
+# Project Refactoring & Improvement Goals (Prioritized)
+
+This project has several key areas targeted for improvement. The following goals are listed in **priority order**. When generating code, providing suggestions, or answering questions, prioritize solutions that align with this order and the overall goals:
+
+1.  **Make RL Model Path Configurable:**
+    * **Goal:** Remove the hardcoded absolute path to the `.pth` RL model file.
+    * **Action:** Modify `@./backend/RL_Hex_game/algorithm/Algorithm.py` (and any other relevant files like `consumers.py` if it also loads the model) to load the model path from Django settings (`settings.py`) or an environment variable.
+
+2.  **Consolidate RL Algorithm Code:**
+    * **Goal:** Eliminate code duplication by removing RL-related files from `@./backend/RL_Hex_game/Hex/Hexgame/utils/` and ensuring all backend components use the canonical versions in `@./backend/RL_Hex_game/algorithm/`.
+    * **Action:** Update imports in `consumers.py` (and potentially elsewhere) to point to the `algorithm/` directory. Safely remove duplicated files from `utils/` after confirming they are unused.
+
+3.  **Improve & Integrate RL Algorithm (MCTS):**
+    * **Goal:** Enhance the AI's capability by fully integrating and potentially improving the Monte Carlo Tree Search (MCTS) implementation.
+    * **Actions:**
+        * Ensure the backend (`consumers.py`, via `Algorithm.py`) correctly utilizes the MCTS logic found in `@./backend/RL_Hex_game/algorithm/MCTS.py` during AI move prediction (`ai_move` action).
+        * Refactor `consumers.py` or `Algorithm.py` if needed to properly incorporate MCTS into the `predict` flow, ensuring it uses the game state appropriately.
+        * Consider potential improvements or parameter tuning for the MCTS algorithm itself.
+
+4.  **Refine UI/UX & Frontend Logic:**
+    * **Goal:** Enhance the user interface design and user flow for better intuition and fluency. Improve frontend code structure and reliability. *(Note: Implementation can be phased - structure/mocks first, then integration)*.
+    * **Actions:**
+        * Analyze existing UI components (`@./hex-ai-frontend/src/components/`) for potential reuse or breakdown into smaller, more focused components.
+        * When developing new UI features, implement static versions first to ensure layout and styling (Tailwind CSS) are correct.
+        * Integrate state management logic using Zustand (`@./hex-ai-frontend/src/store/gameStore.ts`) following established patterns.
+        * Connect frontend components to **mock APIs/logic** initially to verify functionality independently of backend/logic changes.
+        * Generate or suggest structures for **unit tests** (e.g., using Jest/React Testing Library) for components and state logic.
+        * Later, integrate with real frontend logic and finalized APIs.
+
+5.  **Move Core Game Logic to Frontend:**
+    * **Goal:** Relocate primary game logic checks from the backend (`models.py`, `consumers.py`) to the frontend (`gameStore.ts`, related utilities).
+    * **Logic Includes:** Legal move validation, win/loss detection (`check_hex_connection`), undo/redo state manipulation, turn setting logic.
+    * **Implication:** Backend focuses on persistence and orchestrating AI moves. Frontend provides immediate feedback/validation. Requires careful implementation and testing to ensure consistency.
+
+6.  **Refine API Strategy & Implementation:**
+    * **Goal:** Solidify the API approach, favoring WebSockets for real-time actions and REST for auxiliary operations, and add necessary endpoints.
+    * **Actions:**
+        * Prioritize WebSocket communication (`consumers.py`) for `move`, `ai_move`, `undo`, `restart`. Deprecate corresponding REST endpoints in `views.py`.
+        * Implement the planned `GET /api/games/` REST endpoint for fetching game lists, ensuring it uses serializers correctly (`serializers.py`).
+        * Review and potentially add other necessary REST endpoints for non-real-time data (e.g., user stats, settings).
+
+**Guidance:** When assisting with development tasks, actively suggest approaches that align with these prioritized goals. For instance, focus on configuration (#1) and code consolidation (#2) before suggesting major changes to MCTS integration (#3) or game logic location (#5). Highlight potential conflicts with this priority order if user requests deviate significantly.

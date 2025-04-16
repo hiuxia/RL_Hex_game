@@ -1,0 +1,40 @@
+---
+description: 
+globs: backend/**
+alwaysApply: false
+---
+---
+description: "Standards and guidelines for backend development using Django, Channels, ORM, and Python."
+globs: ["backend/**"] # Apply when working within the backend directory
+alwaysApply: false # Auto Attached based on file context
+---
+
+# Backend Standards (Django/Python)
+
+When working within the `backend/` directory:
+
+-   **Framework:** Use Django 4.x with ASGI support enabled via Django Channels.
+-   **Language:** Python 3. Use type hints extensively. Follow PEP 8 guidelines.
+-   **Core App:** `Hexgame` (`@./backend/RL_Hex_game/Hex/Hexgame/`).
+-   **Real-time Communication:**
+    -   WebSockets are handled by `HexgameConsumer` in `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py`.
+    -   This is the primary interface for game actions (`move`, `undo`, `ai_move`, `restart`).
+    -   Adhere strictly to the message contract defined in `websocket-api.mdc`.
+    -   Use `channel_layer.group_send` to broadcast updates.
+    -   Use `sync_to_async` for blocking ORM calls within the async consumer context.
+-   **Persistence:**
+    -   Use the Django ORM with the `HexGame` model defined in `@./backend/RL_Hex_game/Hex/Hexgame/models.py`.
+    -   The `HexGame` model currently contains game logic methods (`make_move`, `undo_last_move`, `reset_game`). Be aware of the goal to move some logic frontend (see `refactoring-goals.mdc`).
+    -   Database is SQLite (`@./backend/RL_Hex_game/Hex/Hex/settings.py`).
+-   **API:**
+    -   REST API endpoints are defined in `@./backend/RL_Hex_game/Hex/Hexgame/views.py`.
+    -   Focus is shifting away from REST for core game actions; new game logic should primarily use WebSockets.
+    -   New non-realtime endpoints (like game list) should follow RESTful principles.
+    -   Use serializers defined in `@./backend/RL_Hex_game/Hex/Hexgame/serializers.py` for data conversion.
+-   **RL Agent Interaction:**
+    -   The `HexgameConsumer` interacts with the RL agent.
+    -   **MUST** use the canonical RL modules located in `@./backend/RL_Hex_game/algorithm/`. Avoid the duplicated code in `Hexgame/utils/`.
+    -   See `rl-agent-interaction.mdc` for details on the interface.
+-   **Configuration:**
+    -   **CRITICAL:** Avoid hardcoded paths. The RL model path MUST be configurable (e.g., via `settings.py` or environment variables), not hardcoded as it currently is in `consumers.py` and `utils/Algorithm.py`.
+-   **Coordinate System:** The backend receives and processes board positions as XY coordinates (likely row, col indices). Be mindful of this when interacting with the `HexGame` model board representation and when receiving data from the frontend (which uses Cube coordinates).
