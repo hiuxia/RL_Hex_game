@@ -1,6 +1,6 @@
 ---
 description: "Outlines key planned refactoring efforts and architectural changes for the project, guiding AI assistance towards these goals. Goals are listed in priority order."
-alwaysApply: false # Agent Requested or Manual (Useful when discussing future changes or refactoring tasks)
+alwaysApply: false 
 ---
 
 # Project Refactoring & Improvement Goals (Prioritized)

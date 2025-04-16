@@ -1,32 +1,28 @@
 ---
-description: 
-globs: backend/RL_Hex_game/algorithm/**,backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py,backend/RL_Hex_game/Hex/Hexgame/consumers.py
-alwaysApply: false
----
----
-description: "How the backend interacts with the PyTorch RL agent, including interface, model loading, and known issues."
-globs: ["backend/RL_Hex_game/algorithm/**", "backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py", "backend/RL_Hex_game/Hex/Hexgame/consumers.py"] # Apply when working with RL code or consumers
-alwaysApply: false # Auto Attached
+description: "How the backend interacts with the PyTorch RL agent, clarifying the currently used code location, interface, model loading, and known issues."
+globs: ["backend/RL_Hex_game/Hex/Hexgame/utils/**.py", "backend/RL_Hex_game/algorithm/**.py", "backend/RL_Hex_game/Hex/Hexgame/consumers.py"]
+alwaysApply: false 
 ---
 
 # RL Agent Interaction
 
 The backend interacts with the PyTorch-based RL agent to get AI moves.
 
-- **Canonical Location:** The primary RL logic (model definition, MCTS, self-play, prediction) SHOULD reside in `@./backend/RL_Hex_game/algorithm/`.
-- **Code Duplication Issue:** There is potentially duplicated/outdated RL code in `@./backend/RL_Hex_game/Hex/Hexgame/utils/` (e.g., `Algorithm.py`, `Hexmodel.py`). **Prefer using and updating the code in `@./backend/RL_Hex_game/algorithm/`.** The analysis suggests `consumers.py` might currently be using the `utils` version - this should be refactored.
-- **Interaction Point:** The backend (`@./backend/RL_Hex_game/Hex/Hexgame/consumers.py`'s `handle_ai_move` method) calls the RL agent.
+- **Currently Active Code Location:** The RL code actively imported and used by `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py` is located within the **`@./backend/RL_Hex_game/Hex/Hexgame/utils/`** directory (e.g., `Algorithm.py`, `Hexmodel.py`). Modifications intended for the running application should target these files initially.
+- **Separate/Test Code Location:** The `@./backend/RL_Hex_game/algorithm/` directory contains a separate implementation, potentially for testing or as an unmerged version.
+- **Code Duplication/Inconsistency Issue:** There are known inconsistencies between the implementations in `utils/` and `algorithm/`. Analyzing and resolving these is a refactoring goal (see `refactoring-goals.mdc`).
+- **Interaction Point:** The backend (`@./backend/RL_Hex_game/Hex/Hexgame/consumers.py`'s `handle_ai_move` method) calls the RL agent, currently expected to be the one imported from `utils/`.
 - **Interface:**
-    - The core interaction happens via the `HexAI` class (defined in `Algorithm.py`) and its `predict` method.
+    - The core interaction happens via the `HexAI` class (defined in `utils/Algorithm.py`) and its `predict` method.
     - `predict(input_dict)` Input: A dictionary containing the current game state, typically including:
-        - `board`: The current board state (likely 11x11 list of lists: 1 for P1, -1 for P2, 0 for empty).
+        - `board`: The current board state (11x11 list of lists: 1 for P1, -1 for P2, 0 for empty).
         - `player_turn`: String indicating whose turn it is ('AI', 'AI_1', 'AI_2').
-        - `last_moves`: Representation of move order/history (check `Algorithm.py`'s `preprocess_input` for exact usage).
+        - `last_moves`: Representation of move order/history (check `utils/Algorithm.py`'s `preprocess_input`).
     - `predict(input_dict)` Output: A dictionary containing:
         - `optimal_move`: A tuple or list `[x, y]` representing the chosen move in backend XY coordinates.
-        - `winning_rate`: The model's estimated win probability for the current player (value between 0 and 1).
-- **Model Definition:** The neural network architecture is defined in `HexNet` within `Hexmodel.py` (use the one in `@./backend/RL_Hex_game/algorithm/`).
+        - `winning_rate`: The model's estimated win probability for the current player (0 to 1).
+- **Model Definition:** The neural network architecture currently used is defined in `HexNet` within `@./backend/RL_Hex_game/Hex/Hexgame/utils/Hexmodel.py`.
 - **Model Loading:**
-    - The `HexAI` class loads a pre-trained PyTorch model from a `.pth` file.
-    - **CRITICAL ISSUE:** The file path to this model is currently **hardcoded** within `Algorithm.py` and potentially `consumers.py`. This MUST be changed to use a configurable path (e.g., from Django settings or environment variables).
+    - The `HexAI` class in `utils/Algorithm.py` loads a pre-trained PyTorch model (`.pth`).
+    - **CRITICAL ISSUE:** The file path to this model is currently **hardcoded** within `@./backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py` (and potentially `consumers.py`). This MUST be changed to use a configurable path (goal #1 in `refactoring-goals.mdc`).
 - **Dependencies:** PyTorch, NumPy.
