@@ -1,28 +1,33 @@
 ---
-description: "How the backend interacts with the PyTorch RL agent, clarifying the currently used code location, interface, model loading, and known issues."
+description: "How the backend interacts with the PyTorch RL agent, clarifying code locations (active vs correct), interface, model loading, MCTS usage, and known issues."
+# Apply when working with RL code (in utils or algorithm) or consumers.py
 globs: ["backend/RL_Hex_game/Hex/Hexgame/utils/**.py", "backend/RL_Hex_game/algorithm/**.py", "backend/RL_Hex_game/Hex/Hexgame/consumers.py"]
-alwaysApply: false 
+alwaysApply: false
 ---
 
 # RL Agent Interaction
 
 The backend interacts with the PyTorch-based RL agent to get AI moves.
 
-- **Currently Active Code Location:** The RL code actively imported and used by `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py` is located within the **`@./backend/RL_Hex_game/Hex/Hexgame/utils/`** directory (e.g., `Algorithm.py`, `Hexmodel.py`). Modifications intended for the running application should target these files initially.
-- **Separate/Test Code Location:** The `@./backend/RL_Hex_game/algorithm/` directory contains a separate implementation, potentially for testing or as an unmerged version.
-- **Code Duplication/Inconsistency Issue:** There are known inconsistencies between the implementations in `utils/` and `algorithm/`. Analyzing and resolving these is a refactoring goal (see `refactoring-goals.mdc`).
-- **Interaction Point:** The backend (`@./backend/RL_Hex_game/Hex/Hexgame/consumers.py`'s `handle_ai_move` method) calls the RL agent, currently expected to be the one imported from `utils/`.
-- **Interface:**
-    - The core interaction happens via the `HexAI` class (defined in `utils/Algorithm.py`) and its `predict` method.
-    - `predict(input_dict)` Input: A dictionary containing the current game state, typically including:
-        - `board`: The current board state (11x11 list of lists: 1 for P1, -1 for P2, 0 for empty).
-        - `player_turn`: String indicating whose turn it is ('AI', 'AI_1', 'AI_2').
-        - `last_moves`: Representation of move order/history (check `utils/Algorithm.py`'s `preprocess_input`).
-    - `predict(input_dict)` Output: A dictionary containing:
-        - `optimal_move`: A tuple or list `[x, y]` representing the chosen move in backend XY coordinates.
-        - `winning_rate`: The model's estimated win probability for the current player (0 to 1).
-- **Model Definition:** The neural network architecture currently used is defined in `HexNet` within `@./backend/RL_Hex_game/Hex/Hexgame/utils/Hexmodel.py`.
+- **Currently Active Code Location:** The RL prediction logic actively imported and used by `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py` is initiated via `@./backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py`.
+- **Correct/Intended Code Location:** The correct implementations for core logic reside in `@./backend/RL_Hex_game/algorithm/`:
+    - `GameLogic.py`: Contains the accurate `HexGame` environment logic needed for MCTS.
+    - `MCTS.py`: Contains the correct MCTS implementation.
+    - `Hexmodel.py`: Contains the `HexNet` model definition (verify consistency with `utils/Hexmodel.py`).
+- **Known Issue:** The MCTS logic within the `utils/` directory (if any is directly implemented there or implicitly used by `utils/Algorithm.py`) is **incorrectly implemented**. Refactoring MUST involve using `GameLogic` and `MCTS` from the `algorithm/` directory.
+- **Interaction Point:** The backend (`consumers.py`'s `handle_ai_move`) calls the `predict` method of the `HexAI` class, currently instantiated from `utils/Algorithm.py`.
+- **Interface (`utils/Algorithm.py` - Current):**
+    - `predict(input_dict)` Input: Dictionary with `board`, `player_turn`, `last_moves`.
+    - `predict(input_dict)` Output: Dictionary with `optimal_move` (`[x, y]`), `winning_rate` (0-1).
+- **Required MCTS Integration:**
+    - The `predict` method (or equivalent logic called by `consumers.py`) **MUST** be refactored to:
+        1. Use the `HexGame` class from `@./backend/RL_Hex_game/algorithm/GameLogic.py` to represent the state accurately for the search.
+        2. Use the `MCTS` class from `@./backend/RL_Hex_game/algorithm/MCTS.py`.
+        3. Initialize the `MCTS` class with a **simulation count of 200** (e.g., `MCTS(model, simulations=200)`).
+        4. Run `mcts.search()` using the `GameLogic` state.
+        5. Determine the `optimal_move` based on MCTS results.
+- **Model Definition:** The `HexNet` definition likely exists in both `utils/Hexmodel.py` and `algorithm/Hexmodel.py`. The version in `algorithm/` should be considered canonical unless analysis proves otherwise.
 - **Model Loading:**
-    - The `HexAI` class in `utils/Algorithm.py` loads a pre-trained PyTorch model (`.pth`).
-    - **CRITICAL ISSUE:** The file path to this model is currently **hardcoded** within `@./backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py` (and potentially `consumers.py`). This MUST be changed to use a configurable path (goal #1 in `refactoring-goals.mdc`).
+    - The `HexAI` class in `utils/Algorithm.py` currently loads the `.pth` model.
+    - **CRITICAL ISSUE:** The file path is **hardcoded**. This MUST be made configurable (goal #1 in `refactoring-goals.mdc`).
 - **Dependencies:** PyTorch, NumPy.

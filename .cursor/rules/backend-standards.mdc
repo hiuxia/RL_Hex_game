@@ -1,7 +1,7 @@
 ---
-description: "Standards and guidelines for developing the Django backend, including models, consumers, and API patterns, noting the current RL code location."
+description: "Standards and guidelines for developing the Django backend, including models, consumers, and API patterns, noting the correct RL code location."
 globs: ["backend/**"] 
-alwaysApply: false # Auto Attached based on file context
+alwaysApply: false 
 ---
 
 # Backend Standards (Django/Python)
@@ -27,9 +27,9 @@ When working within the `backend/` directory:
     - New non-realtime endpoints (like game list) should follow RESTful principles.
     - Use serializers defined in `@./backend/RL_Hex_game/Hex/Hexgame/serializers.py` for data conversion.
 - **RL Integration:**
-    - **CURRENTLY ACTIVE CODE:** The RL agent code actively used by `consumers.py` resides in `@./backend/RL_Hex_game/Hex/Hexgame/utils/` (e.g., `Algorithm.py`, `Hexmodel.py`). Ensure `consumers.py` correctly imports from this location.
-    - **INCONSISTENCY NOTE:** There is separate, potentially unmerged/test code in `@./backend/RL_Hex_game/algorithm/`. Resolving inconsistencies between `utils/` and `algorithm/` is a refactoring goal (see `refactoring-goals.mdc`).
+    - **CURRENTLY ACTIVE CODE:** The RL agent code actively imported by `consumers.py` resides in `@./backend/RL_Hex_game/Hex/Hexgame/utils/` (e.g., `Algorithm.py`).
+    - **CORRECT IMPLEMENTATION:** The correct/intended implementations for core logic like `GameLogic` and `MCTS`, and potentially `HexNet`, reside in `@./backend/RL_Hex_game/algorithm/`. The MCTS logic in `utils/` is known to be incorrect. Refactoring goal #2 involves switching to use the code from `algorithm/`.
     - See `rl-agent-interaction.mdc` for details on the interface.
 - **Configuration:**
-    - **CRITICAL:** Avoid hardcoded paths. The RL model path MUST be configurable (e.g., via `settings.py` or environment variables), not hardcoded as it currently is in `@./backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py` and potentially `consumers.py`.
+    - **CRITICAL:** Avoid hardcoded paths. The RL model path MUST be configurable (e.g., via `settings.py` or environment variables), not hardcoded as it currently is in `@./backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py`.
 - **Coordinate System:** The backend receives and processes board positions as XY coordinates (likely row, col indices). Be mindful of this when interacting with the `HexGame` model board representation and when receiving data from the frontend (which uses Cube coordinates).
