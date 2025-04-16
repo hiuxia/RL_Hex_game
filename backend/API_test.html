@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hex Game WebSocket Test</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; }
+        pre { background-color: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        .log { border-bottom: 1px solid #ccc; padding-bottom: 10px; margin-bottom: 10px; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        button { padding: 10px 15px; margin: 10px 5px 10px 0; cursor: pointer; border-radius: 5px; border: 1px solid #ccc; background-color: #e7e7e7; }
+        button:hover { background-color: #ddd; }
+    </style>
+</head>
+<body>
+    <h1>Hex Game WebSocket Test</h1>
+    <button onclick="runAllTests()">Run All Tests</button>
+    <div id="output"></div>
+
+    <script>
+        const WS_BASE_URL = "ws://localhost:8000/ws/game/";
+        const outputDiv = document.getElementById('output');
+        let currentGameId = null;
+        let gameWebSocket = null;
+
+        // --- Helper Functions ---
+
+        function logMessage(message, type = 'info') {
+            console.log(`[${type.toUpperCase()}] ${message}`);
+            const logEntry = document.createElement('div');
+            logEntry.className = `log ${type}`;
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            outputDiv.prepend(logEntry); // Add new logs to the top
+        }
+
+        function connectWebSocket(url) {
+            return new Promise((resolve, reject) => {
+                logMessage(`Connecting to ${url}...`);
+                const ws = new WebSocket(url);
+
+                ws.onopen = () => {
+                    logMessage(`Connected to ${url}`, 'success');
+                    resolve(ws);
+                };
+
+                ws.onerror = (error) => {
+                    logMessage(`WebSocket Error: ${error.message || 'Unknown error'}`, 'error');
+                    console.error("WebSocket Error:", error);
+                    reject(error);
+                };
+
+                ws.onclose = (event) => {
+                    logMessage(`WebSocket closed: Code=${event.code}, Reason=${event.reason || 'No reason given'}`, event.wasClean ? 'info' : 'error');
+                    if (gameWebSocket === ws) {
+                        gameWebSocket = null; // Clear reference if it's the main game socket
+                    }
+                };
+            });
+        }
+
+        function sendMessage(ws, action, data = {}) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                logMessage("WebSocket is not open.", 'error');
+                return;
+            }
+            const message = JSON.stringify({ action, ...data });
+            logMessage(`Sending: ${message}`);
+            ws.send(message);
+        }
+
+        function waitForMessage(ws, expectedType = null, timeout = 5000) {
+            return new Promise((resolve, reject) => {
+                let timeoutId = null;
+
+                const messageListener = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        logMessage(`Received: ${JSON.stringify(message)}`);
+
+                        if (message.type === 'error') {
+                            logMessage(`Received error: ${message.data?.message}`, 'error');
+                            // Decide if this error should reject the promise or be handled differently
+                            // For now, we resolve with the error message for inspection
+                            resolve(message);
+                            cleanup();
+                            return;
+                        }
+
+                        if (expectedType === null || message.type === expectedType) {
+                            resolve(message);
+                            cleanup();
+                        }
+                        // If expectedType is set but doesn't match, keep listening
+                    } catch (e) {
+                        logMessage(`Error parsing message: ${e}`, 'error');
+                        console.error("Parsing error:", e, "Raw data:", event.data);
+                        // Decide how to handle parsing errors, maybe reject?
+                        // For now, log and keep listening
+                    }
+                };
+
+                const errorListener = (error) => {
+                    logMessage(`WebSocket error during wait: ${error.message || 'Unknown error'}`, 'error');
+                    cleanup();
+                    reject(error);
+                };
+
+                const closeListener = (event) => {
+                    logMessage(`WebSocket closed unexpectedly during wait. Code=${event.code}`, 'error');
+                    cleanup();
+                    reject(new Error(`WebSocket closed unexpectedly. Code=${event.code}`));
+                };
+
+                const cleanup = () => {
+                    clearTimeout(timeoutId);
+                    ws.removeEventListener('message', messageListener);
+                    ws.removeEventListener('error', errorListener);
+                    ws.removeEventListener('close', closeListener);
+                };
+
+                ws.addEventListener('message', messageListener);
+                ws.addEventListener('error', errorListener);
+                ws.addEventListener('close', closeListener);
+
+                timeoutId = setTimeout(() => {
+                    logMessage(`Timeout waiting for message (expected type: ${expectedType || 'any'})`, 'error');
+                    cleanup();
+                    reject(new Error(`Timeout waiting for message (expected type: ${expectedType || 'any'})`));
+                }, timeout);
+            });
+        }
+
+        // --- Test Functions ---
+
+        async function testCreateGame(mode = 'HUMAN_AI') {
+            logMessage(`--- Test: Create Game (Mode: ${mode}) ---`);
+            let creationWs = null;
+            try {
+                creationWs = await connectWebSocket(WS_BASE_URL + "new/");
+                sendMessage(creationWs, 'create_game', { mode });
+                const response = await waitForMessage(creationWs, 'game_created');
+
+                if (response && response.type === 'game_created' && response.data && response.data.game_id) {
+                    currentGameId = response.data.game_id;
+                    logMessage(`Game created successfully! ID: ${currentGameId}`, 'success');
+                    // The server should close this connection after sending game_created
+                    // await creationWs.close(); // No need to manually close, server does it
+                } else {
+                    throw new Error(`Failed to create game. Response: ${JSON.stringify(response)}`);
+                }
+            } catch (error) {
+                logMessage(`Create Game Test Failed: ${error.message}`, 'error');
+                if (creationWs && creationWs.readyState === WebSocket.OPEN) {
+                    creationWs.close();
+                }
+                throw error; // Re-throw to stop further tests if needed
+            }
+            logMessage(`--- End Test: Create Game ---`);
+        }
+
+        async function testJoinGame() {
+            logMessage(`--- Test: Join Game (ID: ${currentGameId}) ---`);
+            if (!currentGameId) {
+                throw new Error("Cannot join game: No game ID available.");
+            }
+            try {
+                if (gameWebSocket && gameWebSocket.readyState === WebSocket.OPEN) {
+                    logMessage("Closing existing game WebSocket connection...");
+                    gameWebSocket.close();
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Short delay
+                }
+                gameWebSocket = await connectWebSocket(`${WS_BASE_URL}${currentGameId}/`);
+                const response = await waitForMessage(gameWebSocket, 'game_state'); // Expect initial state
+
+                if (response && response.type === 'game_state' && response.data && response.data.id == currentGameId) {
+                    logMessage(`Successfully joined game ${currentGameId} and received initial state.`, 'success');
+                    // Log initial state details
+                    logMessage(`Mode: ${response.data.mode}, Turn: ${response.data.player_turn}, Human Color: ${response.data.human_color}`);
+                } else {
+                    throw new Error(`Failed to join game or receive initial state. Response: ${JSON.stringify(response)}`);
+                }
+            } catch (error) {
+                logMessage(`Join Game Test Failed: ${error.message}`, 'error');
+                if (gameWebSocket && gameWebSocket.readyState === WebSocket.OPEN) {
+                    gameWebSocket.close();
+                }
+                gameWebSocket = null;
+                throw error;
+            }
+            logMessage(`--- End Test: Join Game ---`);
+        }
+
+        async function testMakeMove(x, y) {
+            logMessage(`--- Test: Make Move (${x}, ${y}) ---`);
+            if (!gameWebSocket) throw new Error("Not connected to game WebSocket.");
+            try {
+                sendMessage(gameWebSocket, 'move', { x, y });
+                const response = await waitForMessage(gameWebSocket, 'game_update');
+                if (response && response.type === 'game_update' && response.data) {
+                     logMessage(`Move successful. Board[${x}][${y}] updated. Current turn: ${response.data.player_turn}`, 'success');
+                     // Basic check: Ensure the board at x,y is no longer 0
+                     if (response.data.board && response.data.board[x][y] !== 0) {
+                         logMessage(`Board state at [${x}][${y}] confirmed updated.`, 'success');
+                     } else {
+                         logMessage(`Board state at [${x}][${y}] was not updated as expected.`, 'error');
+                     }
+                } else {
+                    throw new Error(`Move failed or unexpected response: ${JSON.stringify(response)}`);
+                }
+            } catch (error) {
+                logMessage(`Make Move Test Failed: ${error.message}`, 'error');
+                throw error;
+            }
+            logMessage(`--- End Test: Make Move ---`);
+        }
+
+         async function testAiMove() {
+            logMessage(`--- Test: AI Move ---`);
+            if (!gameWebSocket) throw new Error("Not connected to game WebSocket.");
+            try {
+                // Optional: Check if it's AI's turn based on previous state if necessary
+                sendMessage(gameWebSocket, 'ai_move');
+                const response = await waitForMessage(gameWebSocket, 'game_update', 10000); // AI move might take longer
+                if (response && response.type === 'game_update' && response.data) {
+                     logMessage(`AI move successful. Current turn: ${response.data.player_turn}`, 'success');
+                     // Add more checks if needed, e.g., verify a piece was placed
+                } else {
+                    throw new Error(`AI move failed or unexpected response: ${JSON.stringify(response)}`);
+                }
+            } catch (error) {
+                logMessage(`AI Move Test Failed: ${error.message}`, 'error');
+                throw error;
+            }
+            logMessage(`--- End Test: AI Move ---`);
+        }
+
+        async function testUndoMove() {
+            logMessage(`--- Test: Undo Move ---`);
+            if (!gameWebSocket) throw new Error("Not connected to game WebSocket.");
+            try {
+                sendMessage(gameWebSocket, 'undo');
+                const response = await waitForMessage(gameWebSocket, 'game_update');
+                if (response && response.type === 'game_update' && response.data) {
+                     logMessage(`Undo successful. Current turn: ${response.data.player_turn}`, 'success');
+                     // Add checks, e.g., verify last move in history is removed, board state reverted
+                } else {
+                     // Handle case where undo might be invalid (e.g., no moves made)
+                     if (response && response.type === 'error') {
+                         logMessage(`Undo failed as expected (or server error): ${response.data.message}`, 'info');
+                     } else {
+                        throw new Error(`Undo failed or unexpected response: ${JSON.stringify(response)}`);
+                     }
+                }
+            } catch (error) {
+                logMessage(`Undo Move Test Failed: ${error.message}`, 'error');
+                throw error;
+            }
+            logMessage(`--- End Test: Undo Move ---`);
+        }
+
+        async function testRestartGame() {
+            logMessage(`--- Test: Restart Game ---`);
+            if (!gameWebSocket) throw new Error("Not connected to game WebSocket.");
+            try {
+                sendMessage(gameWebSocket, 'restart');
+                const response = await waitForMessage(gameWebSocket, 'game_update');
+                if (response && response.type === 'game_update' && response.data) {
+                     logMessage(`Restart successful. Current turn: ${response.data.player_turn}`, 'success');
+                     // Check if board is reset, history cleared etc.
+                     const isBoardReset = response.data.board.every(row => row.every(cell => cell === 0));
+                     if (isBoardReset) {
+                        logMessage('Board confirmed reset.', 'success');
+                     } else {
+                        logMessage('Board not fully reset.', 'error');
+                     }
+                } else {
+                    throw new Error(`Restart failed or unexpected response: ${JSON.stringify(response)}`);
+                }
+            } catch (error) {
+                logMessage(`Restart Game Test Failed: ${error.message}`, 'error');
+                throw error;
+            }
+            logMessage(`--- End Test: Restart Game ---`);
+        }
+
+        // --- Main Test Runner ---
+
+        async function runAllTests() {
+            outputDiv.innerHTML = ''; // Clear previous logs
+            currentGameId = null;
+            if (gameWebSocket && gameWebSocket.readyState === WebSocket.OPEN) {
+                gameWebSocket.close();
+                gameWebSocket = null;
+            }
+            logMessage("====== Starting WebSocket API Tests ======");
+
+            try {
+                // Test Human vs AI Flow
+                await testCreateGame('HUMAN_AI');
+                await testJoinGame();
+                await testMakeMove(0, 0); // Make a move as human
+                await testAiMove();       // Trigger AI move
+                await testMakeMove(1, 1); // Make another move
+                await testUndoMove();       // Undo last human move
+                await testUndoMove();       // Undo AI move (if implementation allows/makes sense)
+                await testRestartGame();    // Restart the game
+                logMessage("====== Human vs AI Flow Tests Passed ======", 'success');
+
+                // Test AI vs AI Flow (Basic creation and join)
+                await testCreateGame('AI_AI');
+                await testJoinGame(); // Join the AI vs AI game to observe
+                // Note: AI vs AI game runs in the background on the server.
+                // We can listen for updates here if needed.
+                logMessage("Listening for AI vs AI game updates for 5 seconds...");
+                try {
+                    // Listen for a few updates
+                    await waitForMessage(gameWebSocket, 'game_update', 5000);
+                    await waitForMessage(gameWebSocket, 'game_update', 5000);
+                } catch (timeoutError) {
+                    logMessage("No game updates received for AI vs AI game in the timeframe (or timeout occurred). This might be normal if the game finished quickly or updates are slow.", 'info');
+                }
+                logMessage("====== AI vs AI Flow Tests (Create/Join) Passed ======", 'success');
+
+                logMessage("====== All Tests Completed ======", 'success');
+
+            } catch (error) {
+                logMessage(`====== A Test Failed: ${error.message} ======`, 'error');
+                console.error("Test failure:", error);
+            } finally {
+                if (gameWebSocket && gameWebSocket.readyState === WebSocket.OPEN) {
+                    logMessage("Closing final WebSocket connection.");
+                    gameWebSocket.close();
+                    gameWebSocket = null;
+                }
+                logMessage("====== Test Run Finished ======");
+            }
+        }
+
+    </script>
+</body>
+</html>

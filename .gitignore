@@ -1,0 +1,114 @@
+# Dependency directories
+node_modules/
+/node_modules
+/.pnp
+.pnp.js
+venv/
+.venv/
+env/
+Pods/
+vendor/
+
+# Next.js build output
+.next/
+/out/
+
+# Django
+*.log
+*.pot
+*.pyc
+__pycache__/
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# Environment variables and secrets
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env.development.local
+.env.production.local
+.env.test.local
+
+# Log files
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.out
+
+# Build and compiled output
+dist/
+build/
+target/
+bin/
+obj/
+*.o
+*.class
+*.pyc
+
+# macOS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Testing
+/coverage
+.nyc_output
+
+# Temporary/Backup files
+*~
+*.tmp
+*.bak
+*.swp
+.*.swp
+
+# SQLite
+*.sqlite
+*.sqlite3
+*.db
+
+# Cloud provider specific
+.terraform/
+*.tfstate
+*.tfstate.backup
+.serverless/
+cdk.out/
+
+# Misc
+.vercel
+.npm
+.eslintcache
+.yarn-integrity
+.cache/

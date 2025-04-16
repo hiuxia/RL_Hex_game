@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+:root {
+  --foreground-rgb: 226, 232, 240; /* text-primary */
+  --background-start-rgb: 26, 32, 44; /* background / board-bg */
+  --background-end-rgb: 26, 32, 44; /* background / board-bg */
+}
+
+/* Light mode styles */
+@media (prefers-color-scheme: light) {
+  :root {
+    --foreground-rgb: 26, 32, 44; /* Darker text for light mode */
+    --background-start-rgb: 255, 255, 255; /* Light background */
+    --background-end-rgb: 255, 255, 255; /* Light background */
+  }
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: rgb(var(--background-start-rgb)); /* Single background color */
+  /* Ensure body and html take full height for h-screen to work reliably */
+  height: 100%;
+}
+
+html {
+  height: 100%;
+}
+
+/* Optional: Apply global font if desired, e.g., Inter */
+/* body {
+  font-family: 'Inter', sans-serif;
+} */
+
+/* Ensure layers are defined if you add custom base styles */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
