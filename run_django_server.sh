@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
 
-cd "RL_Hex_game/Hex"
+cd "backend/RL_Hex_game/Hex"
 
 daphne Hex.asgi:application

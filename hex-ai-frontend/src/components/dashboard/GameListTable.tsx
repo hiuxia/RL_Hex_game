@@ -1,47 +1,106 @@
-import React from "react";
+"use client";
+import React, { useEffect, useState } from "react";
 import Link from "next/link"; // For linking to game/replay pages
 
-// TODO: Define props (e.g., list of game objects)
+// Interface for the API response from /api/games/
+interface ApiGame {
+	id: number;
+	player_turn: string; // "human" or "AI"
+	winner: string | null; // "human", "AI", or null
+	mode: string; // "HUMAN_AI" or "AI_AI"
+	human_color: string; // "red" or "blue"
+}
+
+// Frontend representation of a game
 interface Game {
 	id: string;
 	opponent: string;
 	status: "Active" | "Completed" | "Waiting";
 	outcome?: "Win" | "Loss" | "Draw";
-	date: string;
-	mode: "HUMAN_AI" | "AI_AI" | "HUMAN_HUMAN"; // Example modes
+	date: string; // We'll use "Recent" as we don't have actual date from API
+	mode: "HUMAN_AI" | "AI_AI" | "HUMAN_HUMAN";
 }
 
-interface GameListTableProps {
-	// games?: Game[];
-}
+const API_BASE_URL =
+	process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
-const GameListTable: React.FC<GameListTableProps> = (/*{ games = [] }*/) => {
-	// Placeholder data
-	const games: Game[] = [
-		{
-			id: "123",
-			opponent: "AI (Medium)",
-			status: "Active",
-			date: "Today",
-			mode: "HUMAN_AI",
-		},
-		{
-			id: "456",
-			opponent: "AI (Hard)",
-			status: "Completed",
-			outcome: "Win",
-			date: "Yesterday",
-			mode: "HUMAN_AI",
-		},
-		{
-			id: "789",
-			opponent: "PlayerX",
-			status: "Completed",
-			outcome: "Loss",
-			date: "2 days ago",
-			mode: "HUMAN_HUMAN",
-		},
-	];
+const GameListTable = () => {
+	const [games, setGames] = useState<Game[]>([]);
+	const [isLoading, setIsLoading] = useState<boolean>(true);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		const fetchGames = async () => {
+			setIsLoading(true);
+			setError(null);
+
+			try {
+				const response = await fetch(`${API_BASE_URL}/api/games/`);
+
+				if (!response.ok) {
+					throw new Error(
+						`Failed to fetch games: ${response.status} ${response.statusText}`
+					);
+				}
+
+				const apiGames: ApiGame[] = await response.json();
+
+				// Map API response to frontend Game format
+				const formattedGames: Game[] = apiGames.map((game) => {
+					// Determine game status
+					let status: "Active" | "Completed" | "Waiting";
+					let outcome: "Win" | "Loss" | "Draw" | undefined;
+
+					if (game.winner) {
+						status = "Completed";
+						outcome = game.winner === "human" ? "Win" : "Loss";
+					} else {
+						status = "Active";
+					}
+
+					// For opponent, use AI for HUMAN_AI mode
+					const opponent =
+						game.mode === "HUMAN_AI" ? "AI" : "AI vs AI Match";
+
+					return {
+						id: game.id.toString(),
+						opponent,
+						status,
+						outcome,
+						date: "Recent", // We don't have actual dates from the API
+						mode: game.mode as "HUMAN_AI" | "AI_AI" | "HUMAN_HUMAN",
+					};
+				});
+
+				setGames(formattedGames);
+			} catch (err) {
+				console.error("Error fetching games:", err);
+				setError(
+					err instanceof Error ? err.message : "Failed to fetch games"
+				);
+			} finally {
+				setIsLoading(false);
+			}
+		};
+
+		fetchGames();
+	}, []);
+
+	if (isLoading) {
+		return (
+			<div className="bg-white rounded-lg shadow p-6 text-center">
+				<div className="animate-pulse">Loading games...</div>
+			</div>
+		);
+	}
+
+	if (error) {
+		return (
+			<div className="bg-white rounded-lg shadow p-6 text-center text-red-500">
+				Error: {error}
+			</div>
+		);
+	}
 
 	return (
 		<div className="bg-white rounded-lg shadow overflow-hidden">

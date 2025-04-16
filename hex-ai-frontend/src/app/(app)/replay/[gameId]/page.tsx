@@ -1,7 +1,8 @@
 "use client"; // Needed for state and effects
 
 import React, { useState, useEffect, useCallback } from "react";
-import { usePathname } from "next/navigation"; // Can use this or params prop
+// Remove unused import
+// import { usePathname } from "next/navigation";
 
 // Import Game Components (assuming they are client components or compatible)
 import HexBoard from "@/components/hex/HexBoard";
@@ -10,7 +11,7 @@ import ReplayControlBar from "@/components/replay/ReplayControlBar"; // Import t
 
 // Import types and helpers
 import { CubeCoordinates, PlayerColors } from "@/types/hexProps";
-import { computeGridCoordinates, cubeToKey } from "@/lib/coordinates";
+import { computeGridCoordinates, cubeToKey, xyToCube } from "@/lib/coordinates";
 
 const BOARD_SIZE = 11; // Assuming standard size
 
@@ -28,6 +29,19 @@ interface ReplayGameData {
 	movesHistory: ReplayMove[];
 	winner?: number | null; // Or 'human'/'AI'
 	// Add other static game metadata if needed
+}
+
+// Define backend API response type
+interface BackendGameResponse {
+	id: number;
+	board: number[][];
+	player_turn: string; // "human" or "AI"
+	human_color: string; // "red" or "blue"
+	last_moves: Array<[number, number]>; // Array of [x, y] coordinates
+	winner: string | null; // "human", "AI", or null
+	moves_history: Array<[number, number, string]>; // Array of [x, y, player] tuples
+	win_probability: { human: number; ai: number } | null;
+	mode: string; // "HUMAN_AI" or "AI_AI"
 }
 
 // Helper function to create board state at a specific move number
@@ -65,45 +79,73 @@ export default function ReplayPage({ params }: { params: { gameId: string } }) {
 		setIsLoading(true);
 		setError(null);
 		console.log(`Fetching replay data for game ID: ${gameId}`);
-		// TODO: Implement actual data fetching (e.g., using fetch API)
-		// fetch(`/api/replays/${gameId}`) // Example API endpoint
-		//   .then(res => res.json())
-		//   .then(data => {
-		//      setReplayData(data);
-		//      setCurrentMoveNumber(0); // Start at beginning
-		//      setBoardState(getBoardStateAtMove(data.movesHistory, 0, BOARD_SIZE));
-		//      setIsLoading(false);
-		//   })
-		//   .catch(err => {
-		//      console.error("Failed to fetch replay data:", err);
-		//      setError("Failed to load replay.");
-		//      setIsLoading(false);
-		//   });
 
-		// --- Placeholder Data ---
-		setTimeout(() => {
-			// Simulate fetch delay
-			const placeholderMoves: ReplayMove[] = [
-				{ player: 1, coords: { q: 5, r: 5, s: -10 }, moveNumber: 1 },
-				{ player: 2, coords: { q: 4, r: 5, s: -9 }, moveNumber: 2 },
-				{ player: 1, coords: { q: 6, r: 4, s: -10 }, moveNumber: 3 },
-				{ player: 2, coords: { q: 3, r: 6, s: -9 }, moveNumber: 4 },
-				{ player: 1, coords: { q: 7, r: 3, s: -10 }, moveNumber: 5 },
-			];
-			const placeholderData: ReplayGameData = {
-				gameId: gameId,
-				players: { p1: "Player 1", p2: "Player 2" },
-				movesHistory: placeholderMoves,
-				winner: null, // Example: Game not finished
-			};
-			setReplayData(placeholderData);
-			setCurrentMoveNumber(0);
-			setBoardState(
-				getBoardStateAtMove(placeholderData.movesHistory, 0, BOARD_SIZE)
-			);
-			setIsLoading(false);
-		}, 1000);
-		// --- End Placeholder Data ---
+		fetch(`/games/${gameId}/`)
+			.then((res) => {
+				if (!res.ok) {
+					throw new Error(
+						`Failed to fetch game: ${res.status} ${res.statusText}`
+					);
+				}
+				return res.json();
+			})
+			.then((data: BackendGameResponse) => {
+				// Convert backend data to our frontend format
+				const convertedMoves: ReplayMove[] = data.moves_history
+					.map((moveData, index) => {
+						// moveData is [x, y, player]
+						const [x, y, player] = moveData;
+						const coords = xyToCube(x, y);
+
+						// Skip moves with invalid coordinates
+						if (coords === null) {
+							console.warn(
+								`Invalid coordinates for move ${
+									index + 1
+								}: [${x}, ${y}]`
+							);
+							return null;
+						}
+
+						return {
+							player: player === "human" ? 1 : 2, // Convert string to number
+							coords: coords, // Convert XY to Cube coordinates
+							moveNumber: index + 1,
+						};
+					})
+					.filter((move): move is ReplayMove => move !== null); // Filter out null moves
+
+				const convertedData: ReplayGameData = {
+					gameId: gameId,
+					players: {
+						p1: data.mode === "HUMAN_AI" ? "Human" : "AI 1",
+						p2: data.mode === "HUMAN_AI" ? "AI" : "AI 2",
+					},
+					movesHistory: convertedMoves,
+					winner:
+						data.winner === "human"
+							? 1
+							: data.winner === "AI"
+							? 2
+							: null,
+				};
+
+				setReplayData(convertedData);
+				setCurrentMoveNumber(0); // Start at beginning
+				setBoardState(
+					getBoardStateAtMove(
+						convertedData.movesHistory,
+						0,
+						BOARD_SIZE
+					)
+				);
+				setIsLoading(false);
+			})
+			.catch((err) => {
+				console.error("Failed to fetch replay data:", err);
+				setError("Failed to load replay data. " + err.message);
+				setIsLoading(false);
+			});
 	}, [gameId]); // Refetch if gameId changes
 
 	// --- Update board state when move number changes ---
@@ -257,30 +299,21 @@ export default function ReplayPage({ params }: { params: { gameId: string } }) {
 							</span>{" "}
 							{replayData.players.p2}
 						</p>
-						{replayData.winner && (
-							<p>
-								<span className="font-medium text-gray-700">
-									Winner:
-								</span>{" "}
-								Player {replayData.winner}
-							</p>
-						)}
-					</div>
-				</div>
-				{/* Replay Controls */}
-				{/* Use flex-1 so it takes remaining space */}
-				<div className="flex-1 min-h-0 bg-white rounded-lg shadow flex flex-col overflow-y-auto">
-					<div className="p-4 flex-grow">
-						{" "}
-						{/* Padding for potential future content */}
-						<h3 className="text-lg font-semibold text-gray-800 mb-2">
-							Replay Controls
-						</h3>
-						<p className="text-sm text-gray-500">
-							Step through the game.
+						<p>
+							<span className="font-medium text-gray-700">
+								Winner:
+							</span>{" "}
+							{replayData.winner === 1
+								? replayData.players.p1
+								: replayData.winner === 2
+								? replayData.players.p2
+								: "Game in progress"}
 						</p>
 					</div>
-					{/* Control bar at the bottom */}
+				</div>
+
+				{/* Replay Controls */}
+				<div className="flex-none bg-white rounded-lg shadow p-4">
 					<ReplayControlBar
 						currentMove={currentMoveNumber}
 						totalMoves={replayData.movesHistory.length}
@@ -291,7 +324,35 @@ export default function ReplayPage({ params }: { params: { gameId: string } }) {
 						onGoToStart={handleGoToStart}
 						onGoToEnd={handleGoToEnd}
 						onSeek={handleSeek}
+						rel="noopener" // Add the required prop
 					/>
+				</div>
+
+				{/* Move List/History */}
+				<div className="flex-grow bg-white rounded-lg shadow p-4 overflow-y-auto">
+					<h3 className="text-base font-medium mb-2 text-gray-700">
+						Move History
+					</h3>
+					<ul className="space-y-1">
+						{replayData.movesHistory.map((move, index) => (
+							<li
+								key={`move-${index}`}
+								className={`text-sm px-2 py-1 rounded ${
+									index + 1 === currentMoveNumber
+										? "bg-blue-100 text-blue-800"
+										: ""
+								}`}
+								onClick={() => handleSeek(index + 1)}
+								style={{ cursor: "pointer" }}
+							>
+								{index + 1}. Player{" "}
+								{move.player === 1
+									? replayData.players.p1
+									: replayData.players.p2}{" "}
+								({move.coords.q}, {move.coords.r})
+							</li>
+						))}
+					</ul>
 				</div>
 			</div>
 		</div>

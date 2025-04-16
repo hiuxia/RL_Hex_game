@@ -1,11 +1,13 @@
 # RL Hex Game Documentation
 
-Generated on 4/16/2025
+Generated on 4/17/2025
 
 This doc provides a comprehensive overview of the RL Hex Game project.
 
 ## Table of Contents
 
+- 📁 .cursor/
+  - 📁 rules/
 - 📁 backend/
   - 📄 [API_test.html](#backend-api_test-html)
   - 📁 RL_Hex_game/
@@ -98,6 +100,8 @@ This doc provides a comprehensive overview of the RL Hex Game project.
       - 📄 [hexProps.ts](#hex-ai-frontend-src-types-hexprops-ts)
   - 📄 [tailwind.config.ts](#hex-ai-frontend-tailwind-config-ts)
   - 📄 [tsconfig.json](#hex-ai-frontend-tsconfig-json)
+- 📄 [hex_game_refactoring_plan.md](#hex_game_refactoring_plan-md)
+- 📄 [进度.md](#---md)
 
 ## Source Code
 
@@ -526,7 +530,7 @@ SECRET_KEY = "django-insecure-6gy26qr_=++60sdd#mp8k+=lfd$b-ahbhg(4b&wr-f$!v0n^xo
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -539,20 +543,15 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "Hexgame",
-    'rest_framework',
-     'channels',
-    
+    "rest_framework",
+    "channels",
 ]
 
 # 配置ASGI应用
-ASGI_APPLICATION = 'Hex.asgi.application'
+ASGI_APPLICATION = "Hex.asgi.application"
 
 # 配置通道层（使用内存作为后端，不需要Redis）
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
-    }
-}
+CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
 
 MIDDLEWARE = [
@@ -638,13 +637,15 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'Hexgame/static'),  # 应用静态目录
+    os.path.join(BASE_DIR, "Hexgame/static"),  # 应用静态目录
 ]
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# RL Model settings
+RL_MODEL_PATH = "../../Hex/Hexgame/models/model1000.pth"
 
 ```
 
@@ -728,11 +729,12 @@ class HexgameConfig(AppConfig):
 ### <a id="backend-rl_hex_game-hex-hexgame-consumers-py"></a>backend/RL_Hex_game/Hex/Hexgame/consumers.py
 
 ```python
-
 import asyncio
 import json
+import logging
 
 from asgiref.sync import sync_to_async
+from channels.exceptions import ChannelFull
 from channels.generic.websocket import AsyncWebsocketConsumer
 
 import Hexgame.utils.Algorithm as Algorithm
@@ -741,39 +743,86 @@ from .models import HexGame
 from .serializers import HexGameSerializer
 from .utils.utils import check_hex_connection
 
+# Set up logging
+logger = logging.getLogger(__name__)
+
 
 class HexGameConsumer(AsyncWebsocketConsumer):
     """处理Hex游戏的WebSocket连接"""
 
     async def connect(self):
         """处理连接请求"""
-        # 如果是创建新游戏的连接（/ws/game/new/）
-        if self.scope['path'] == '/ws/game/new/':
-            # 特殊标记，不加入任何组
-            self.is_creation_connection = True
-            await self.accept()
-        else:
-            # 常规游戏房间连接
-            self.game_id = self.scope['url_route']['kwargs']['game_id']
-            self.game_group_name = f'game_{self.game_id}'
-            await self.channel_layer.group_add(self.game_group_name, self.channel_name)
-            await self.accept()
-            await self.send_current_game_state()
+        try:
+            # 如果是创建新游戏的连接（/ws/game/new/）
+            if self.scope["path"] == "/ws/game/new/":
+                # 特殊标记，不加入任何组
+                self.is_creation_connection = True
+                await self.accept()
+                logger.info("New game creation connection accepted")
+            else:
+                # 常规游戏房间连接
+                self.game_id = self.scope["url_route"]["kwargs"]["game_id"]
+                self.game_group_name = f"game_{self.game_id}"
+
+                # Check if channel layer is configured
+                if self.channel_layer is None:
+                    logger.error("Channel layer not configured")
+                    raise ValueError("Channel layer not configured")
+
+                # Verify game exists before joining group
+                try:
+                    game = await self.get_game()
+                except Exception as e:
+                    logger.error(f"Failed to get game with ID {self.game_id}: {str(e)}")
+                    await self.close(code=4004)  # Custom close code
+                    return
+
+                # Join group and accept connection
+                try:
+                    await self.channel_layer.group_add(
+                        self.game_group_name, self.channel_name
+                    )
+                    await self.accept()
+                    logger.info(f"Connection accepted for game {self.game_id}")
+
+                    # Send initial game state
+                    await self.send_current_game_state()
+                except ChannelFull:
+                    logger.error(f"Channel is full for game {self.game_id}")
+                    await self.close(code=4001)
+                except Exception as e:
+                    logger.error(f"Error in connect for game {self.game_id}: {str(e)}")
+                    await self.close(code=4002)
+        except Exception as e:
+            logger.error(f"Unhandled exception in connect: {str(e)}")
+            # Try to close the connection if possible
+            try:
+                await self.close(code=4000)
+            except:
+                pass
 
     async def disconnect(self, close_code):
-        # Add a safety check
-        if hasattr(self, "game_group_name"):
-            await self.channel_layer.group_discard(
-                self.game_group_name, self.channel_name
-            )
-
-    # Rest of your disconnect method...
+        """处理断开连接"""
+        try:
+            logger.info(f"WebSocket disconnected with code: {close_code}")
+            # Only remove from group if we joined a group
+            if hasattr(self, "game_group_name") and self.channel_layer:
+                try:
+                    await self.channel_layer.group_discard(
+                        self.game_group_name, self.channel_name
+                    )
+                    logger.info(f"Removed from group {self.game_group_name}")
+                except Exception as e:
+                    logger.error(f"Error removing from group: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error in disconnect: {str(e)}")
 
     async def receive(self, text_data):
         """接收客户端消息"""
         try:
             data = json.loads(text_data)
             action = data.get("action")
+            logger.info(f"Received action: {action}")
 
             # 如果是创建连接且收到创建请求
             if hasattr(self, "is_creation_connection") and action == "create_game":
@@ -788,41 +837,84 @@ class HexGameConsumer(AsyncWebsocketConsumer):
             elif action == "restart":
                 await self.handle_restart()
             elif action == "create_ai_game":
-                await self.handle_create_ai_game()
+                # Check if this method is implemented
+                if hasattr(self, "handle_create_ai_game"):
+                    await self.handle_create_ai_game()
+                else:
+                    await self.send_error("Action not implemented: create_ai_game")
             else:
-                await self.send_error("Invalid action")
+                await self.send_error(f"Invalid action: {action}")
 
+        except json.JSONDecodeError:
+            await self.send_error("Invalid JSON format")
         except Exception as e:
-            await self.send_error(str(e))
+            logger.error(f"Error in receive: {str(e)}")
+            await self.send_error(f"Error processing request: {str(e)}")
 
     async def send_current_game_state(self):
         """发送当前游戏状态（统一消息格式）"""
-        game = await self.get_game()
-        serializer = HexGameSerializer(game)
-        await self._send_message("game_state", serializer.data)
+        try:
+            game = await self.get_game()
+            serializer = HexGameSerializer(game)
+            await self._send_message("game_state", serializer.data)
+        except Exception as e:
+            logger.error(f"Error sending game state: {str(e)}")
+            await self.send_error(f"Could not retrieve game state: {str(e)}")
 
     async def send_error(self, message):
         """发送错误消息（统一错误格式）"""
-        await self._send_message("error", {"message": message})
+        try:
+            logger.error(f"Sending error to client: {message}")
+            await self._send_message("error", {"message": message})
+        except Exception as e:
+            logger.error(f"Error sending error message: {str(e)}")
 
     async def game_update(self, event):
         """处理组播消息（统一消息格式）"""
-        await self._send_message(event["type"], event["data"])
+        try:
+            await self._send_message(event["type"], event["data"])
+        except Exception as e:
+            logger.error(f"Error in game_update: {str(e)}")
 
     async def _send_message(self, msg_type, data):
         """统一消息发送方法"""
-        await self.send(text_data=json.dumps({"type": msg_type, "data": data}))
+        try:
+            await self.send(text_data=json.dumps({"type": msg_type, "data": data}))
+        except Exception as e:
+            logger.error(f"Error in _send_message: {str(e)}")
 
     async def get_game(self):
         """获取游戏对象（异步方法）"""
-        return await HexGame.objects.aget(id=self.game_id)
+        try:
+            return await HexGame.objects.aget(id=self.game_id)
+        except HexGame.DoesNotExist:
+            logger.error(f"Game with ID {self.game_id} not found")
+            raise ValueError(f"Game with ID {self.game_id} not found")
+        except Exception as e:
+            logger.error(f"Error fetching game: {str(e)}")
+            raise
 
     # ---- 核心操作处理 ----
     async def handle_move(self, data):
         """处理玩家移动"""
         try:
             game = await self.get_game()
+
+            # Validate input
+            if "x" not in data or "y" not in data:
+                await self.send_error("Missing coordinates (x, y)")
+                return
+
             x, y = data["x"], data["y"]
+
+            # Additional validation
+            if not isinstance(x, int) or not isinstance(y, int):
+                await self.send_error("Coordinates must be integers")
+                return
+
+            if not (0 <= x < 11 and 0 <= y < 11):  # 11x11 board assumption
+                await self.send_error("Coordinates out of bounds")
+                return
 
             if await game.async_make_move(x, y):
                 # 检查胜负
@@ -840,12 +932,21 @@ class HexGameConsumer(AsyncWebsocketConsumer):
                 await self.send_error("Invalid move")
 
         except Exception as e:
-            await self.send_error(f"移动失败: {str(e)}")
+            logger.error(f"Error in handle_move: {str(e)}")
+            await self.send_error(f"Move failed: {str(e)}")
 
     async def handle_ai_move(self):
         """处理AI移动(完全异步化)"""
         try:
             game = await self.get_game()
+
+            if game.winner:
+                await self.send_error("Game already has a winner")
+                return
+
+            if game.player_turn != "AI":
+                await self.send_error("Not AI's turn")
+                return
 
             # 调用算法服务
             input_dict = {
@@ -853,10 +954,14 @@ class HexGameConsumer(AsyncWebsocketConsumer):
                 "player_turn": game.player_turn,
                 "last_moves": game.last_moves,
             }
-            ai_model = Algorithm.HexAI(
-                "/Users/wanghaonan/Library/CloudStorage/OneDrive-个人/cityu/第一年 B 学期/RL/RL 课程项目/01/backend/RL_Hex_game/Hex/Hexgame/models/model1000.pth"
-            )
-            response = ai_model.predict(input_dict)
+
+            try:
+                ai_model = Algorithm.HexAI()
+                response = ai_model.predict(input_dict)
+            except Exception as e:
+                logger.error(f"AI prediction error: {str(e)}")
+                await self.send_error(f"AI prediction failed: {str(e)}")
+                return
 
             if response:
                 ai_move = response["optimal_move"]
@@ -875,12 +980,14 @@ class HexGameConsumer(AsyncWebsocketConsumer):
 
                     await self.broadcast_game_update(game)
                     return  # 成功返回
-
-            await self.send_error("AI move failed")
+                else:
+                    await self.send_error(f"AI could not make move at {ai_move}")
+            else:
+                await self.send_error("AI failed to generate a move")
 
         except Exception as e:
-            print(f"AI移动异常: {str(e)}")
-            await self.send_error(f"AI移动失败: {str(e)}")
+            logger.error(f"AI move error: {str(e)}")
+            await self.send_error(f"AI move failed: {str(e)}")
 
     async def handle_undo(self):
         """处理悔棋（异步化）"""
@@ -891,7 +998,8 @@ class HexGameConsumer(AsyncWebsocketConsumer):
             else:
                 await self.send_error("No moves to undo")
         except Exception as e:
-            await self.send_error(f"悔棋失败: {str(e)}")
+            logger.error(f"Undo error: {str(e)}")
+            await self.send_error(f"Undo failed: {str(e)}")
 
     async def handle_restart(self):
         """处理重置（异步化）"""
@@ -902,7 +1010,8 @@ class HexGameConsumer(AsyncWebsocketConsumer):
             else:
                 await self.send_error("Reset failed")
         except Exception as e:
-            await self.send_error(f"重置失败: {str(e)}")
+            logger.error(f"Restart error: {str(e)}")
+            await self.send_error(f"Restart failed: {str(e)}")
 
     async def handle_create_game(self, data):
         """创建游戏（异步优化版）"""
@@ -911,16 +1020,28 @@ class HexGameConsumer(AsyncWebsocketConsumer):
 
             # 验证模式合法性
             if mode not in ["HUMAN_AI", "AI_AI"]:
-                await self.send_error("Invalid game mode")
+                await self.send_error(f"Invalid game mode: {mode}")
                 return
 
             # 使用异步ORM创建游戏对象
             from .models import HexGame
 
-            game = await sync_to_async(HexGame.objects.create)(mode=mode)
+            try:
+                game = await sync_to_async(HexGame.objects.create)(mode=mode)
+            except Exception as e:
+                logger.error(f"Error creating game: {str(e)}")
+                await self.send_error(f"Could not create game: {str(e)}")
+                return
 
             # 异步执行初始化
-            await sync_to_async(game.initialize)(new_game=True)
+            try:
+                await sync_to_async(game.initialize)(new_game=True)
+            except Exception as e:
+                logger.error(f"Error initializing game: {str(e)}")
+                # Clean up the created game if initialization fails
+                await sync_to_async(game.delete)()
+                await self.send_error(f"Could not initialize game: {str(e)}")
+                return
 
             # 返回创建成功消息
             await self._send_message(
@@ -930,31 +1051,48 @@ class HexGameConsumer(AsyncWebsocketConsumer):
                     "redirect": f"/ws/game/{game.id}/",
                 },
             )
+
+            logger.info(f"Created new game with ID {game.id}, mode {mode}")
+
+            # Close the connection after successful game creation
             await self.close()
 
             # 异步启动AI对战（如果是AI_AI模式）
             if mode == "AI_AI":
                 from .utils.utils import run_ai_vs_ai_game
 
-                asyncio.create_task(run_ai_vs_ai_game(game.id))
+                try:
+                    asyncio.create_task(run_ai_vs_ai_game(game.id))
+                    logger.info(f"Started AI vs AI game with ID {game.id}")
+                except Exception as e:
+                    logger.error(f"Error starting AI vs AI game: {str(e)}")
 
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()  # 打印完整错误堆栈
-            await self.send_error(f"创建游戏失败: {str(e)}")
+            logger.error(f"Error in handle_create_game: {str(e)}")
+            await self.send_error(f"Game creation failed: {str(e)}")
 
     async def broadcast_game_update(self, game):
         """统一广播更新方法"""
-        serializer = HexGameSerializer(game)
-        print(serializer.data)
-        await self.channel_layer.group_send(
-            self.game_group_name,
-            {
-                "type": "game_update",  # 对应game_update方法
-                "data": serializer.data,
-            },
-        )
+        try:
+            serializer = HexGameSerializer(game)
+            # Avoid large debug output
+            logger.debug(f"Broadcasting update for game {game.id}")
+
+            if self.channel_layer is None:
+                logger.error("Channel layer not available for broadcast")
+                return
+
+            await self.channel_layer.group_send(
+                self.game_group_name,
+                {
+                    "type": "game_update",  # 对应game_update方法
+                    "data": serializer.data,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Error broadcasting game update: {str(e)}")
+            # Try to send error to the client who initiated the action
+            await self.send_error(f"Failed to broadcast game update: {str(e)}")
 
 ```
 
@@ -1136,6 +1274,7 @@ websocket_urlpatterns = [
 
 ```python
 from rest_framework import serializers
+
 from .models import HexGame
 
 
@@ -1157,25 +1296,71 @@ class HexGameSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {"board": {"read_only": True}, "last_moves": {"read_only": True}}
 
+
+class HexGameSummarySerializer(serializers.ModelSerializer):
+    """
+    A lightweight serializer for the game list view that includes only essential fields.
+    This reduces payload size and improves performance when fetching multiple games.
+    """
+
+    class Meta:
+        model = HexGame
+        fields = [
+            "id",
+            "player_turn",
+            "winner",
+            "mode",
+            "human_color",
+        ]
+
 ```
 
 ### <a id="backend-rl_hex_game-hex-hexgame-urls-py"></a>backend/RL_Hex_game/Hex/Hexgame/urls.py
 
 ```python
 from django.urls import path
-from .views import AIGameStatusAPI, AIMoveAPI, GameAPI, CreateAIGameAPI, MoveAPI, RestartAPI, UndoAPI, test_api_view
+
+from .views import (
+    AIGameStatusAPI,
+    AIMoveAPI,
+    CreateAIGameAPI,
+    GameAPI,
+    GameListView,
+    MoveAPI,
+    RestartAPI,
+    UndoAPI,
+    test_api_view,
+)
 
 urlpatterns = [
-    path('', test_api_view),
-    path('games/', GameAPI.as_view()),  # POST创建新游戏
-    path('games/<int:game_id>/', GameAPI.as_view()),  # GET获取游戏状态
-    path('games/<int:game_id>/move/', MoveAPI.as_view()),
-    path('games/<int:game_id>/ai_move/', AIMoveAPI.as_view()),
-    path('games/<int:game_id>/undo/', UndoAPI.as_view()),
-    path('games/<int:game_id>/restart/', RestartAPI.as_view()),  # 新增路由
-    path('ai_games/', CreateAIGameAPI.as_view()),  # 创建AI对战
-    path('ai_games/<int:game_id>/', AIGameStatusAPI.as_view()),  # 查询状态
+    path("", test_api_view),
+    path("api/games/", GameListView.as_view()),  # NEW: API to get list of all games
+    # The following REST endpoints are being maintained for backward compatibility
+    # but should be considered deprecated in favor of WebSocket communication
+    path(
+        "games/", GameAPI.as_view()
+    ),  # POST create new game (prefer WebSocket create_game action)
+    path(
+        "games/<int:game_id>/", GameAPI.as_view()
+    ),  # GET game status (prefer WebSocket connection)
+    path(
+        "games/<int:game_id>/move/", MoveAPI.as_view()
+    ),  # DEPRECATED: prefer WebSocket move action
+    path(
+        "games/<int:game_id>/ai_move/", AIMoveAPI.as_view()
+    ),  # DEPRECATED: prefer WebSocket ai_move action
+    path(
+        "games/<int:game_id>/undo/", UndoAPI.as_view()
+    ),  # DEPRECATED: prefer WebSocket undo action
+    path(
+        "games/<int:game_id>/restart/", RestartAPI.as_view()
+    ),  # DEPRECATED: prefer WebSocket restart action
+    path(
+        "ai_games/", CreateAIGameAPI.as_view()
+    ),  # Create AI vs AI game (consider WebSocket)
+    path("ai_games/<int:game_id>/", AIGameStatusAPI.as_view()),  # Query AI game status
 ]
+
 ```
 
 ### <a id="backend-rl_hex_game-hex-hexgame-utils-algorithm-py"></a>backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py
@@ -1192,43 +1377,67 @@ print("Current Directory:", current_dir)
 os.chdir(current_dir.resolve())  # resolve() normalizes the path
 
 
+import logging
+
 import numpy as np
 import torch
+from django.conf import settings
 
 from .Hexmodel import HexNet
+
+logger = logging.getLogger(__name__)
 
 
 class HexAI:
     def __init__(self, model_path=None):
-        model_path = "/Users/wanghaonan/Library/CloudStorage/OneDrive-个人/cityu/第一年 B 学期/RL/RL 课程项目/01/backend/RL_Hex_game/Hex/Hexgame/models/model1000.pth"
+        # Use the model_path parameter if provided, otherwise use the Django settings
+        if model_path is None:
+            try:
+                model_path = settings.RL_MODEL_PATH
+                logger.info(f"Using model path from settings: {model_path}")
+            except AttributeError:
+                error_msg = "RL_MODEL_PATH not defined in Django settings."
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
         self.model = self.load_model(model_path)
 
     def load_model(self, model_path):
         model = HexNet()  # Model Seleciton
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-            print("Using CUDA device.")
-        elif torch.backends.mps.is_available():
-            device = torch.device("mps")
-            print("Using MPS device.")
-        else:
-            device = torch.device("cpu")
-            print("Using CPU device.")
 
-        # Load the state dictionary with map_location to ensure compatibility
-        state_dict = torch.load(model_path, map_location=device)
+        try:
+            if torch.cuda.is_available():
+                device = torch.device("cuda")
+                print("Using CUDA device.")
+            elif torch.backends.mps.is_available():
+                device = torch.device("mps")
+                print("Using MPS device.")
+            else:
+                device = torch.device("cpu")
+                print("Using CPU device.")
 
-        # Check if the state_dict is nested (e.g., contains 'model_state')
-        if "model_state" in state_dict:
-            model.load_state_dict(state_dict["model_state"])
-        else:
-            # Assume the loaded object is directly the state_dict
-            # model.load_state_dict(state_dict)
-            raise ValueError("Invalid model state dictionary format.")
+            # Check if model path exists
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model file not found at: {model_path}")
 
-        model.to(device)  # Move the model to the selected device
-        model.eval()
-        return model
+            # Load the state dictionary with map_location to ensure compatibility
+            state_dict = torch.load(model_path, map_location=device)
+
+            # Check if the state_dict is nested (e.g., contains 'model_state')
+            if "model_state" in state_dict:
+                model.load_state_dict(state_dict["model_state"])
+            else:
+                # Assume the loaded object is directly the state_dict
+                # model.load_state_dict(state_dict)
+                raise ValueError("Invalid model state dictionary format.")
+
+            model.to(device)  # Move the model to the selected device
+            model.eval()
+            return model
+
+        except Exception as e:
+            logger.error(f"Error loading model from {model_path}: {str(e)}")
+            raise
 
     def preprocess_input(self, input):
         # Dict -> Tensor
@@ -1301,6 +1510,11 @@ class HexAI:
 
             legal_probs = move_probs[legal_indices]
             print("legal_probs:", legal_probs)
+
+            # Ensure legal_probs is a tensor before calling torch.argmax
+            if isinstance(legal_probs, np.ndarray):
+                legal_probs = torch.from_numpy(legal_probs)
+
             optimal_idx = torch.argmax(legal_probs).item()
             print("optimal_idx:", optimal_idx)
             optimal_move = legal_moves[optimal_idx]
@@ -1317,45 +1531,48 @@ class HexAI:
             print(f"Error in prediction: {str(e)}")
             return None
 
-# !remeber to change the directory
-hex_ai = HexAI()
 
-# 模拟后端输入
-input_data = {
-    "board": [
-        [1, -1, 1, -1, 1, 0, -1, 1, 0, 0, 0],
-        [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 1, 0, 0, 0, 0, 0, -1, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    ],
-    "player_turn": "AI",
-    "last_moves": [
-        [1, 4, 3, 2, 11, 0, 12, 13, 0, 0, 0],
-        [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 9, 0, 0, 0, 0, 0, 8, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    ],
-    # "legal_moves": [(x, y) for x in range(11) for y in range(11)]  # 所有位置合法
-}
+# Move the test code into if __name__ == "__main__": block
+if __name__ == "__main__":
+    # Test code - only runs when script is executed directly
+    hex_ai = HexAI()
 
-# 调用预测函数
-output = hex_ai.predict(input_data)
-print("AI选择的动作:", output["optimal_move"])
-print("胜率:", output["winning_rate"])
+    # 模拟后端输入
+    input_data = {
+        "board": [
+            [1, -1, 1, -1, 1, 0, -1, 1, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 1, 0, 0, 0, 0, 0, -1, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ],
+        "player_turn": "AI",
+        "last_moves": [
+            [1, 4, 3, 2, 11, 0, 12, 13, 0, 0, 0],
+            [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 9, 0, 0, 0, 0, 0, 8, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ],
+        # "legal_moves": [(x, y) for x in range(11) for y in range(11)]  # 所有位置合法
+    }
+
+    # 调用预测函数
+    output = hex_ai.predict(input_data)
+    print("AI选择的动作:", output["optimal_move"])
+    print("胜率:", output["winning_rate"])
 
 ```
 
@@ -1702,6 +1919,7 @@ async def run_ai_vs_ai_game(game_id):
 ### <a id="backend-rl_hex_game-hex-hexgame-views-py"></a>backend/RL_Hex_game/Hex/Hexgame/views.py
 
 ```python
+from django.conf import settings
 from django.shortcuts import render
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -1709,7 +1927,7 @@ from rest_framework.views import APIView
 import Hexgame.utils.Algorithm as Algorithm
 
 from .models import HexGame
-from .serializers import HexGameSerializer
+from .serializers import HexGameSerializer, HexGameSummarySerializer
 from .utils.utils import check_hex_connection, run_ai_vs_ai_game
 
 
@@ -1780,9 +1998,8 @@ class AIMoveAPI(APIView):
                 "player_turn": game.player_turn,
                 "last_moves": game.last_moves,  # 根据模型需要调整字段
             }
-            ai_model = Algorithm.HexAI(
-                "/Users/wanghaonan/Library/CloudStorage/OneDrive-个人/cityu/第一年 B 学期/RL/RL 课程项目/01/backend/RL_Hex_game/Hex/Hexgame/models/model1000.pth"
-            )
+            # Use the configurable model path from settings instead of hardcoded path
+            ai_model = Algorithm.HexAI()
             response = ai_model.predict(input_dict)
 
             if response:
@@ -1849,6 +2066,16 @@ class AIGameStatusAPI(APIView):
     def get(self, request, game_id):
         game = HexGame.objects.get(id=game_id)
         return Response(HexGameSerializer(game).data)
+
+
+class GameListView(APIView):
+    """Get a list of all games"""
+
+    def get(self, request):
+        """Return a list of all existing games"""
+        games = HexGame.objects.all().order_by("-id")  # Most recent first
+        serializer = HexGameSummarySerializer(games, many=True)
+        return Response(serializer.data)
 
 ```
 
@@ -1981,7 +2208,10 @@ def main():
 
 
 if __name__ == "__main_python manage.py runserver_":
-    main()
+    try:
+        main()
+    except SystemExit as e:
+        print(f"Error: {e}")
 
 ```
 
@@ -8740,8 +8970,8 @@ export interface GameplayControlsProps {
 // src/app/(app)/game/[gameId]/page.tsx
 'use client';
 
-import React, { useEffect, useCallback, useRef, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import React, { useEffect, useCallback, useRef, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 
 // Import Game Components
 import HexBoard from "@/components/hex/HexBoard";
@@ -8749,259 +8979,512 @@ import GameInfo from "@/components/hex/GameInfo";
 import GameplayControls from "@/components/hex/GameplayControls";
 
 // Import WebSocket Hook and State
-import { useGameWebSocket, WebSocketState } from '@/hooks/useGameWebSocket';
+import { useGameWebSocket, WebSocketState } from "@/hooks/useGameWebSocket";
 // Import Zustand store hook and state/actions
-import { useGameStore } from '@/store/gameStore';
+import { useGameStore } from "@/store/gameStore";
 // Import coordinate helpers
-import { cubeToKey } from '@/lib/coordinates'; // Import cubeToKey
+import { cubeToKey } from "@/lib/coordinates"; // Import cubeToKey
 // Import types and helpers
-import { CubeCoordinates, PlayerColors } from '@/types/hexProps';
+import { CubeCoordinates, PlayerColors } from "@/types/hexProps";
 
 // Default WebSocket URL (use environment variable preferably)
-const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_BASE_URL || "ws://localhost:8000";
+const WS_BASE_URL =
+	process.env.NEXT_PUBLIC_WS_BASE_URL || "ws://localhost:8000";
 const BOARD_SIZE = 11; // Assuming standard size
 
+// WebSocket configuration
+const WS_CONFIG = {
+	reconnectAttempts: 5,
+	reconnectInterval: 2000,
+	heartbeatInterval: 30000,
+	debug: process.env.NODE_ENV === "development",
+};
+
 export default function GamePage() {
-  const params = useParams();
-  const router = useRouter();
-  const gameId = params?.gameId as string | undefined;
+	const params = useParams();
+	const router = useRouter();
+	const gameId = params?.gameId as string | undefined;
 
-  // Get state and actions from Zustand store
-  const {
-    // State...
-    boardState, // <-- Need boardState to check hex status
-    playerTurn, humanPlayerColor, moves, highlightedHexes, winner, isDraw, mode, winProbability,
-    connectionState: storedConnectionState,
-    lastBackendError,
-    // Actions...
-    handleGameStateUpdate, setConnectionState: setStoreConnectionState, setGameId: setStoreGameId,
-    setLastError, resetLocalState, setSendMessage,
-    requestMove, requestUndo, requestRedo, requestRestart, requestAiMove,
-  } = useGameStore();
+	// Track connection attempts for UX messaging
+	const [connectionAttempts, setConnectionAttempts] = useState(0);
 
-  // Ref to track the previous player turn (for AI trigger)
-  const prevPlayerTurnRef = useRef<number | null>(playerTurn);
+	// Get state and actions from Zustand store
+	const {
+		// State...
+		boardState,
+		playerTurn,
+		humanPlayerColor,
+		moves,
+		highlightedHexes,
+		winner,
+		isDraw,
+		mode,
+		winProbability,
+		connectionState: storedConnectionState,
+		lastBackendError,
+		reconnectInProgress,
+		messageQueue,
+		// Actions...
+		handleGameStateUpdate,
+		handleErrorMessage,
+		setConnectionState: setStoreConnectionState,
+		setGameId: setStoreGameId,
+		setLastError,
+		resetLocalState,
+		setSendMessage,
+		setReconnect,
+		requestMove,
+		requestUndo,
+		requestRedo,
+		requestRestart,
+		requestAiMove,
+	} = useGameStore();
 
-  // Callback to handle messages received from the WebSocket hook
-  const handleWebSocketMessage = useCallback((message: any) => {
-    // (Keep the existing handleWebSocketMessage logic)
-    if (!message || !message.type) {
-        console.warn("Received invalid message structure from WebSocket:", message);
-        return;
-    }
-    console.log("GamePage: Received WebSocket message:", message.type, message.data);
-    switch (message.type) {
-      case 'game_state':
-      case 'game_update':
-        handleGameStateUpdate(message.data);
-        break;
-      case 'error':
-        console.error("Received error message from backend:", message.data?.message);
-        setLastError(message.data?.message || "Unknown error from backend.");
-        break;
-      default:
-        console.log("Received unhandled message type:", message.type);
-    }
-  }, [handleGameStateUpdate, setLastError]);
+	// Ref to track the previous player turn (for AI trigger)
+	const prevPlayerTurnRef = useRef<number | null>(playerTurn);
 
-  // Initialize WebSocket hook
-  const {
-      connect, disconnect, sendMessage,
-      connectionState: hookConnectionState,
-      error: wsError
-  } = useGameWebSocket(handleWebSocketMessage);
+	// Callback to handle messages received from the WebSocket hook
+	const handleWebSocketMessage = useCallback(
+		(message: Record<string, any>) => {
+			if (!message || !message.type) {
+				console.warn(
+					"Received invalid message structure from WebSocket:",
+					message
+				);
+				return;
+			}
+			console.log(
+				"GamePage: Received WebSocket message:",
+				message.type,
+				message.data
+			);
 
+			switch (message.type) {
+				case "game_state":
+				case "game_update":
+					handleGameStateUpdate(message.data);
+					break;
+				case "error":
+					console.error(
+						"Received error message from backend:",
+						message.data?.message
+					);
+					handleErrorMessage(message.data);
+					break;
+				case "game_created":
+					// Handle game creation success
+					console.log("Game created successfully:", message.data);
+					if (message.data?.redirect) {
+						router.push(message.data.redirect);
+					}
+					break;
+				default:
+					console.log(
+						"Received unhandled message type:",
+						message.type
+					);
+			}
+		},
+		[handleGameStateUpdate, handleErrorMessage, router]
+	);
 
-  // --- Effects ---
-  // (Keep existing useEffect hooks for connection, state sync, sendMessage setup, and AI trigger)
+	// Initialize WebSocket hook with configuration
+	const {
+		connect,
+		disconnect,
+		sendMessage,
+		reconnect,
+		connectionState: hookConnectionState,
+		error: wsError,
+	} = useGameWebSocket(handleWebSocketMessage, WS_CONFIG);
 
-  // Effect to connect WebSocket
-  useEffect(() => {
-    if (gameId) {
-      console.log(`GamePage: Attempting to connect for game ID: ${gameId}`);
-      resetLocalState();
-      setStoreGameId(gameId);
-      const wsUrl = `${WS_BASE_URL}/ws/game/${gameId}/`;
-      connect(wsUrl);
-      return () => {
-        console.log(`GamePage: Disconnecting for game ID: ${gameId}`);
-        disconnect();
-        setStoreConnectionState(WebSocketState.CLOSED);
-        setStoreGameId(null);
-      };
-    } else {
-      console.error("GamePage: Game ID is missing from route parameters.");
-      setLastError("Game ID is missing.");
-    }
-  }, [gameId, connect, disconnect, resetLocalState, setStoreGameId, setStoreConnectionState, setLastError, router]);
+	// Effect to connect WebSocket
+	useEffect(() => {
+		if (gameId) {
+			console.log(
+				`GamePage: Attempting to connect for game ID: ${gameId}`
+			);
+			resetLocalState();
+			setStoreGameId(gameId);
+			const wsUrl = `${WS_BASE_URL}/ws/game/${gameId}/`;
+			connect(wsUrl);
+			return () => {
+				console.log(`GamePage: Disconnecting for game ID: ${gameId}`);
+				disconnect();
+				setStoreConnectionState(WebSocketState.CLOSED);
+				setStoreGameId(null);
+			};
+		} else {
+			console.error(
+				"GamePage: Game ID is missing from route parameters."
+			);
+			setLastError("Game ID is missing.");
+		}
+	}, [
+		gameId,
+		connect,
+		disconnect,
+		resetLocalState,
+		setStoreGameId,
+		setStoreConnectionState,
+		setLastError,
+	]);
 
+	// Effect to sync hook's connection state, errors, and reconnection status
+	useEffect(() => {
+		// Update the store with the current connection state
+		setStoreConnectionState(hookConnectionState);
 
-   // Effect to sync hook's connection state and errors
-   useEffect(() => {
-        setStoreConnectionState(hookConnectionState);
-        if (hookConnectionState === WebSocketState.ERROR && wsError) {
-            const errorMsg = wsError instanceof Error ? wsError.message : `WebSocket connection error: ${wsError?.type || 'Unknown'}`;
-            console.error("GamePage: WebSocket hook reported error:", errorMsg);
-            setLastError(errorMsg);
-        } else if (hookConnectionState === WebSocketState.OPEN) {
-             setLastError(null);
-        }
-   }, [hookConnectionState, wsError, setStoreConnectionState, setLastError]);
+		// Track reconnection attempts for UI feedback
+		if (hookConnectionState === WebSocketState.RECONNECTING) {
+			setConnectionAttempts((prev) => prev + 1);
+		} else if (hookConnectionState === WebSocketState.OPEN) {
+			setConnectionAttempts(0);
+		}
 
-   // Effect to pass sendMessage function to store
-   useEffect(() => {
-       if (hookConnectionState === WebSocketState.OPEN && sendMessage) {
-           setSendMessage(sendMessage);
-           console.log("GamePage: sendMessage function set in store.");
-       }
-   }, [hookConnectionState, sendMessage, setSendMessage]);
+		// Handle websocket errors
+		if (hookConnectionState === WebSocketState.ERROR && wsError) {
+			const errorMsg =
+				wsError instanceof Error
+					? wsError.message
+					: `WebSocket connection error: ${
+							wsError?.type || "Unknown"
+					  }`;
+			console.error("GamePage: WebSocket hook reported error:", errorMsg);
+			setLastError(errorMsg);
+		} else if (hookConnectionState === WebSocketState.OPEN) {
+			setLastError(null);
+		}
+	}, [hookConnectionState, wsError, setStoreConnectionState, setLastError]);
 
-   // Effect to automatically trigger AI move
-   useEffect(() => {
-        const humanPlayerNumber = humanPlayerColor === 'red' ? 1 : humanPlayerColor === 'blue' ? 2 : null;
-        const aiPlayerNumber = humanPlayerNumber === 1 ? 2 : humanPlayerNumber === 2 ? 1 : null;
-        // console.log(`AI Trigger Check: Turn=${playerTurn}, PrevTurn=${prevPlayerTurnRef.current}, Mode=${mode}, Winner=${winner}, Draw=${isDraw}, Conn=${storedConnectionState}, Human=${humanPlayerNumber}, AI=${aiPlayerNumber}`);
-        const shouldTrigger =
-            mode === 'HUMAN_AI' && winner === null && !isDraw &&
-            storedConnectionState === WebSocketState.OPEN &&
-            humanPlayerNumber !== null && playerTurn === aiPlayerNumber &&
-            prevPlayerTurnRef.current === humanPlayerNumber;
+	// Effect to pass sendMessage and reconnect functions to store
+	useEffect(() => {
+		// Set the send function when connection is open
+		if (hookConnectionState === WebSocketState.OPEN && sendMessage) {
+			setSendMessage(sendMessage as (payload: object) => boolean);
+			console.log("GamePage: sendMessage function set in store.");
+		}
 
-        if (shouldTrigger) {
-            console.log(`GamePage: Conditions met. Requesting AI move for player ${aiPlayerNumber}...`);
-            const timerId = setTimeout(() => { requestAiMove(); }, 500);
-            // return () => clearTimeout(timerId); // Consider cleanup implications
-        }
-        prevPlayerTurnRef.current = playerTurn;
-   }, [ playerTurn, winner, isDraw, mode, humanPlayerColor, storedConnectionState, requestAiMove, gameId ]);
+		// Always keep the reconnect function updated
+		setReconnect(reconnect);
+	}, [
+		hookConnectionState,
+		sendMessage,
+		reconnect,
+		setSendMessage,
+		setReconnect,
+	]);
 
+	// Effect to automatically trigger AI move
+	useEffect(() => {
+		const humanPlayerNumber =
+			humanPlayerColor === "red"
+				? 1
+				: humanPlayerColor === "blue"
+				? 2
+				: null;
+		const aiPlayerNumber =
+			humanPlayerNumber === 1 ? 2 : humanPlayerNumber === 2 ? 1 : null;
 
-  // --- Derived State & Constants ---
-  const humanPlayerNumber = humanPlayerColor === 'red' ? 1 : humanPlayerColor === 'blue' ? 2 : null;
-  const isInteractionAllowed = winner === null && !isDraw && storedConnectionState === WebSocketState.OPEN && playerTurn === humanPlayerNumber;
-  const canUndo = isInteractionAllowed && moves > 0;
-  const canRedo = false;
-  const playerColors: PlayerColors = { p1: '#E53E3E', p2: '#3182CE', empty: '#F7FAFC', background: '#ffffff' };
-  const gameMetadata = { size: BOARD_SIZE, moves: moves };
+		const shouldTrigger =
+			mode === "HUMAN_AI" &&
+			winner === null &&
+			!isDraw &&
+			storedConnectionState === WebSocketState.OPEN &&
+			humanPlayerNumber !== null &&
+			playerTurn === aiPlayerNumber &&
+			prevPlayerTurnRef.current === humanPlayerNumber;
 
-  // --- NEW: Click Handler with Empty Hex Check ---
-  const handleHexClick = useCallback((coords: CubeCoordinates) => {
-    // Check if the hex is empty *before* calling requestMove
-    const hexKey = cubeToKey(coords);
-    const currentHexState = boardState.get(hexKey);
+		if (shouldTrigger) {
+			console.log(
+				`GamePage: Conditions met. Requesting AI move for player ${aiPlayerNumber}...`
+			);
+			const timerId = setTimeout(() => {
+				requestAiMove();
+			}, 500);
+			return () => clearTimeout(timerId); // Cleanup
+		}
 
-    if (currentHexState === 0) {
-      console.log(`GamePage: Clicked empty hex (${coords.q}, ${coords.r}). Requesting move.`);
-      requestMove(coords); // Call the store action only if empty
-    } else {
-      console.log(`GamePage: Clicked occupied hex (${coords.q}, ${coords.r}). State: ${currentHexState}. Move ignored.`);
-      // Optionally provide brief feedback to the user, e.g., flash the hex or show a temporary message
-      // setLastError("You can only place a piece on an empty hex."); // Or use a less intrusive feedback mechanism
-    }
-  }, [boardState, requestMove]); // Dependencies: boardState and the action
+		prevPlayerTurnRef.current = playerTurn;
+	}, [
+		playerTurn,
+		winner,
+		isDraw,
+		mode,
+		humanPlayerColor,
+		storedConnectionState,
+		requestAiMove,
+	]);
 
+	// --- Derived State & Constants ---
+	const humanPlayerNumber =
+		humanPlayerColor === "red" ? 1 : humanPlayerColor === "blue" ? 2 : null;
+	const isInteractionAllowed =
+		winner === null &&
+		!isDraw &&
+		storedConnectionState === WebSocketState.OPEN &&
+		playerTurn === humanPlayerNumber;
+	const canUndo = isInteractionAllowed && moves > 0;
+	const playerColors: PlayerColors = {
+		p1: "#E53E3E",
+		p2: "#3182CE",
+		empty: "#F7FAFC",
+		background: "#ffffff",
+	};
+	const gameMetadata = { size: BOARD_SIZE, moves };
 
-  // --- Render Logic ---
-  // (Loading / Error States remain the same)
-  if (!gameId) {
-      return <div className="p-6 text-center text-red-600 font-semibold">Invalid Game ID provided.</div>;
-  }
-  if (storedConnectionState === WebSocketState.CONNECTING) {
-      return <div className="p-6 text-center text-gray-600">Connecting to game {gameId}...</div>;
-  }
-  if (lastBackendError) {
-      // Clear error after a delay? Or keep until next successful action?
-      // For now, keep it displayed until cleared by a successful update or connection.
-      return (
-            <div className="p-6 text-center text-red-600">
-                <p className="font-semibold">Error:</p>
-                <p>{lastBackendError}</p>
-                <button
-                    onClick={() => { setLastError(null); router.push('/dashboard'); }} // Clear error on nav
-                    className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                    Return to Dashboard
-                </button>
-            </div>
-      );
-  }
-   if (storedConnectionState === WebSocketState.CLOSED && gameId) {
-        return (
-            <div className="p-6 text-center text-orange-600">
-                Connection Closed. Please try refreshing or return to dashboard.
-                 <button
-                    onClick={() => window.location.reload()}
-                    className="ml-4 mt-4 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
-                >
-                    Refresh
-                </button>
-                 <button
-                    onClick={() => router.push('/dashboard')}
-                    className="ml-4 mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                    Return to Dashboard
-                </button>
-            </div>
-        );
-   }
-   if (storedConnectionState !== WebSocketState.OPEN) {
-        return <div className="p-6 text-center text-gray-600">Establishing connection...</div>;
-   }
+	// Click Handler that uses the store's requestMove action
+	const handleHexClick = useCallback(
+		(coords: CubeCoordinates) => {
+			if (isInteractionAllowed) {
+				requestMove(coords);
+			} else {
+				console.log(
+					"GamePage: Interaction disabled (not player's turn or game ended)"
+				);
+			}
+		},
+		[isInteractionAllowed, requestMove]
+	);
 
-  // Main Game UI
-  return (
-    <div className="flex flex-col md:flex-row h-full p-4 gap-4">
-      {/* Left Column: Hex Board */}
-      <div className="flex-grow flex items-center justify-center overflow-hidden p-2 bg-white rounded-lg shadow md:h-full h-[60vh]">
-        <HexBoard
-          boardState={boardState}
-          playerColors={playerColors}
-          // Use the new handler which includes the empty check
-          onHexClick={isInteractionAllowed ? handleHexClick : () => { console.log("Interaction currently disabled"); }}
-          className="max-w-full max-h-full"
-          boardSize={BOARD_SIZE}
-          highlightedHexes={highlightedHexes}
-        />
-      </div>
+	// Manual reconnect handler
+	const handleManualReconnect = useCallback(() => {
+		console.log("GamePage: Manual reconnection requested");
+		reconnect();
+		setConnectionAttempts(0);
+	}, [reconnect]);
 
-      {/* Right Column: Info and Controls */}
-      <div className="w-full md:w-1/3 flex-none flex flex-col gap-4 md:h-full h-auto">
-        {/* Game Info Panel (no changes needed) */}
-        <div className="flex-none p-4 bg-white rounded-lg shadow overflow-y-auto">
-          <GameInfo gameMetadata={gameMetadata} className="text-gray-600" />
-           {winProbability && (
-               <div className="mt-2 text-sm">
-                   <h3 className="font-medium text-gray-700">Win Probability:</h3>
-                   {Object.entries(winProbability).map(([player, prob]) => (
-                       <p key={player} className="capitalize">{player}: {(prob * 100).toFixed(1)}%</p>
-                   ))}
-               </div>
-           )}
-        </div>
+	// --- Render Logic ---
 
-        {/* Gameplay Controls Panel (no changes needed from Phase 3 update) */}
-        <div className="flex-1 min-h-0 p-4 bg-white rounded-lg shadow flex flex-col overflow-y-auto">
-          <GameplayControls
-            playerTurn={playerTurn}
-            winner={winner}
-            isDraw={isDraw}
-            onNewGameClick={() => router.push('/dashboard')}
-            onUndoClick={requestUndo}
-            onRedoClick={requestRedo}
-            onRestartClick={requestRestart}
-            isInteractionAllowed={isInteractionAllowed}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            className="text-gray-600"
-          />
-           <p className="text-xs text-gray-400 mt-4 pt-2 border-t">Status: {storedConnectionState}</p>
-           {!isInteractionAllowed && winner === null && !isDraw && playerTurn !== null && (
-               <p className="text-sm text-center text-gray-500 mt-2">Waiting for Player {playerTurn}...</p>
-           )}
-        </div>
-      </div>
-    </div>
-  );
+	// Invalid game ID
+	if (!gameId) {
+		return (
+			<div className="p-6 text-center text-red-600 font-semibold">
+				Invalid Game ID provided.
+			</div>
+		);
+	}
+
+	// Initial connecting state
+	if (
+		storedConnectionState === WebSocketState.CONNECTING &&
+		connectionAttempts === 0
+	) {
+		return (
+			<div className="p-6 text-center text-gray-600">
+				Connecting to game {gameId}...
+			</div>
+		);
+	}
+
+	// Reconnection in progress
+	if (
+		reconnectInProgress ||
+		storedConnectionState === WebSocketState.RECONNECTING
+	) {
+		return (
+			<div className="p-6 text-center text-yellow-600">
+				<p>
+					Reconnecting to game {gameId}... (Attempt{" "}
+					{connectionAttempts})
+				</p>
+				{connectionAttempts > 3 && (
+					<button
+						onClick={handleManualReconnect}
+						className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+					>
+						Retry Connection
+					</button>
+				)}
+			</div>
+		);
+	}
+
+	// Connection error with retry option
+	if (storedConnectionState === WebSocketState.ERROR) {
+		return (
+			<div className="p-6 text-center text-red-600">
+				<p className="font-semibold">Connection Error:</p>
+				<p>
+					{lastBackendError ||
+						"Failed to connect to the game server."}
+				</p>
+				<div className="mt-4 flex justify-center space-x-4">
+					<button
+						onClick={handleManualReconnect}
+						className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+					>
+						Retry Connection
+					</button>
+					<button
+						onClick={() => router.push("/dashboard")}
+						className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+					>
+						Return to Dashboard
+					</button>
+				</div>
+			</div>
+		);
+	}
+
+	// Backend error (but connection is OK)
+	if (lastBackendError && storedConnectionState === WebSocketState.OPEN) {
+		return (
+			<div className="p-6 text-center text-orange-600">
+				<p className="font-semibold">Game Error:</p>
+				<p>{lastBackendError}</p>
+				<button
+					onClick={() => setLastError(null)}
+					className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+				>
+					Dismiss
+				</button>
+			</div>
+		);
+	}
+
+	// Connection closed unexpectedly
+	if (storedConnectionState === WebSocketState.CLOSED && gameId) {
+		return (
+			<div className="p-6 text-center text-orange-600">
+				<p>
+					Connection Closed. Please try reconnecting or return to
+					dashboard.
+				</p>
+				<div className="mt-4 flex justify-center space-x-4">
+					<button
+						onClick={handleManualReconnect}
+						className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+					>
+						Reconnect
+					</button>
+					<button
+						onClick={() => router.push("/dashboard")}
+						className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+					>
+						Return to Dashboard
+					</button>
+				</div>
+			</div>
+		);
+	}
+
+	// Still waiting for connection
+	if (storedConnectionState !== WebSocketState.OPEN) {
+		return (
+			<div className="p-6 text-center text-gray-600">
+				Establishing connection...
+			</div>
+		);
+	}
+
+	// Main Game UI
+	return (
+		<div className="flex flex-col h-full">
+			{/* Connection Status Bar */}
+			<div className="bg-gray-100 py-2 px-4 text-sm flex justify-between items-center">
+				<div className="flex items-center">
+					<span
+						className={`h-2 w-2 rounded-full mr-2 ${
+							storedConnectionState === WebSocketState.OPEN
+								? "bg-green-500"
+								: "bg-red-500"
+						}`}
+					></span>
+					<span>
+						{storedConnectionState === WebSocketState.OPEN
+							? "Connected"
+							: "Disconnected"}
+					</span>
+				</div>
+				{messageQueue.length > 0 && (
+					<div className="text-yellow-600">
+						Pending messages: {messageQueue.length}
+					</div>
+				)}
+			</div>
+
+			{/* Main Game Layout */}
+			<div className="flex flex-col md:flex-row flex-1 p-4 gap-4">
+				{/* Left Column: Hex Board */}
+				<div className="flex-grow flex items-center justify-center overflow-hidden p-2 bg-white rounded-lg shadow md:h-full h-[60vh]">
+					<HexBoard
+						boardState={boardState}
+						playerColors={playerColors}
+						onHexClick={handleHexClick}
+						className="max-w-full max-h-full"
+						boardSize={BOARD_SIZE}
+						highlightedHexes={highlightedHexes}
+					/>
+				</div>
+
+				{/* Right Column: Info and Controls */}
+				<div className="w-full md:w-1/3 flex-none flex flex-col gap-4 md:h-full h-auto">
+					{/* Game Info Panel */}
+					<div className="flex-none p-4 bg-white rounded-lg shadow overflow-y-auto">
+						<GameInfo
+							gameMetadata={gameMetadata}
+							className="text-gray-600"
+						/>
+						{winProbability && (
+							<div className="mt-2 text-sm">
+								<h3 className="font-medium text-gray-700">
+									Win Probability:
+								</h3>
+								{Object.entries(winProbability).map(
+									([player, prob]) => (
+										<p key={player} className="capitalize">
+											{player}: {(prob * 100).toFixed(1)}%
+										</p>
+									)
+								)}
+							</div>
+						)}
+					</div>
+
+					{/* Player Turn Indicator */}
+					<div className="flex-none p-4 bg-white rounded-lg shadow">
+						<h3 className="font-medium text-gray-700 mb-2">
+							{winner
+								? `Game Over: ${
+										winner === 1 ? "Red" : "Blue"
+								  } Wins!`
+								: isDraw
+								? "Game Over: Draw!"
+								: `Current Turn: ${
+										playerTurn === 1 ? "Red" : "Blue"
+								  }`}
+						</h3>
+						{playerTurn === humanPlayerNumber &&
+							!winner &&
+							!isDraw && (
+								<p className="text-green-600">Your turn</p>
+							)}
+						{playerTurn !== humanPlayerNumber &&
+							!winner &&
+							!isDraw && (
+								<p className="text-blue-600">
+									Waiting for opponent...
+								</p>
+							)}
+					</div>
+
+					{/* Gameplay Controls Panel */}
+					<div className="flex-1 min-h-0 p-4 bg-white rounded-lg shadow flex flex-col overflow-y-auto">
+						<GameplayControls
+							playerTurn={playerTurn}
+							winner={winner}
+							isDraw={isDraw}
+							onNewGameClick={() => router.push("/dashboard")}
+							onUndoClick={canUndo ? requestUndo : undefined}
+							onRestartClick={requestRestart}
+							onAiMoveClick={requestAiMove}
+						/>
+					</div>
+				</div>
+			</div>
+		</div>
+	);
 }
 
 ```
@@ -9045,7 +9528,8 @@ export default function AppLayout({
 "use client"; // Needed for state and effects
 
 import React, { useState, useEffect, useCallback } from "react";
-import { usePathname } from "next/navigation"; // Can use this or params prop
+// Remove unused import
+// import { usePathname } from "next/navigation";
 
 // Import Game Components (assuming they are client components or compatible)
 import HexBoard from "@/components/hex/HexBoard";
@@ -9054,7 +9538,7 @@ import ReplayControlBar from "@/components/replay/ReplayControlBar"; // Import t
 
 // Import types and helpers
 import { CubeCoordinates, PlayerColors } from "@/types/hexProps";
-import { computeGridCoordinates, cubeToKey } from "@/lib/coordinates";
+import { computeGridCoordinates, cubeToKey, xyToCube } from "@/lib/coordinates";
 
 const BOARD_SIZE = 11; // Assuming standard size
 
@@ -9072,6 +9556,19 @@ interface ReplayGameData {
 	movesHistory: ReplayMove[];
 	winner?: number | null; // Or 'human'/'AI'
 	// Add other static game metadata if needed
+}
+
+// Define backend API response type
+interface BackendGameResponse {
+	id: number;
+	board: number[][];
+	player_turn: string; // "human" or "AI"
+	human_color: string; // "red" or "blue"
+	last_moves: Array<[number, number]>; // Array of [x, y] coordinates
+	winner: string | null; // "human", "AI", or null
+	moves_history: Array<[number, number, string]>; // Array of [x, y, player] tuples
+	win_probability: { human: number; ai: number } | null;
+	mode: string; // "HUMAN_AI" or "AI_AI"
 }
 
 // Helper function to create board state at a specific move number
@@ -9109,45 +9606,73 @@ export default function ReplayPage({ params }: { params: { gameId: string } }) {
 		setIsLoading(true);
 		setError(null);
 		console.log(`Fetching replay data for game ID: ${gameId}`);
-		// TODO: Implement actual data fetching (e.g., using fetch API)
-		// fetch(`/api/replays/${gameId}`) // Example API endpoint
-		//   .then(res => res.json())
-		//   .then(data => {
-		//      setReplayData(data);
-		//      setCurrentMoveNumber(0); // Start at beginning
-		//      setBoardState(getBoardStateAtMove(data.movesHistory, 0, BOARD_SIZE));
-		//      setIsLoading(false);
-		//   })
-		//   .catch(err => {
-		//      console.error("Failed to fetch replay data:", err);
-		//      setError("Failed to load replay.");
-		//      setIsLoading(false);
-		//   });
 
-		// --- Placeholder Data ---
-		setTimeout(() => {
-			// Simulate fetch delay
-			const placeholderMoves: ReplayMove[] = [
-				{ player: 1, coords: { q: 5, r: 5, s: -10 }, moveNumber: 1 },
-				{ player: 2, coords: { q: 4, r: 5, s: -9 }, moveNumber: 2 },
-				{ player: 1, coords: { q: 6, r: 4, s: -10 }, moveNumber: 3 },
-				{ player: 2, coords: { q: 3, r: 6, s: -9 }, moveNumber: 4 },
-				{ player: 1, coords: { q: 7, r: 3, s: -10 }, moveNumber: 5 },
-			];
-			const placeholderData: ReplayGameData = {
-				gameId: gameId,
-				players: { p1: "Player 1", p2: "Player 2" },
-				movesHistory: placeholderMoves,
-				winner: null, // Example: Game not finished
-			};
-			setReplayData(placeholderData);
-			setCurrentMoveNumber(0);
-			setBoardState(
-				getBoardStateAtMove(placeholderData.movesHistory, 0, BOARD_SIZE)
-			);
-			setIsLoading(false);
-		}, 1000);
-		// --- End Placeholder Data ---
+		fetch(`/games/${gameId}/`)
+			.then((res) => {
+				if (!res.ok) {
+					throw new Error(
+						`Failed to fetch game: ${res.status} ${res.statusText}`
+					);
+				}
+				return res.json();
+			})
+			.then((data: BackendGameResponse) => {
+				// Convert backend data to our frontend format
+				const convertedMoves: ReplayMove[] = data.moves_history
+					.map((moveData, index) => {
+						// moveData is [x, y, player]
+						const [x, y, player] = moveData;
+						const coords = xyToCube(x, y);
+
+						// Skip moves with invalid coordinates
+						if (coords === null) {
+							console.warn(
+								`Invalid coordinates for move ${
+									index + 1
+								}: [${x}, ${y}]`
+							);
+							return null;
+						}
+
+						return {
+							player: player === "human" ? 1 : 2, // Convert string to number
+							coords: coords, // Convert XY to Cube coordinates
+							moveNumber: index + 1,
+						};
+					})
+					.filter((move): move is ReplayMove => move !== null); // Filter out null moves
+
+				const convertedData: ReplayGameData = {
+					gameId: gameId,
+					players: {
+						p1: data.mode === "HUMAN_AI" ? "Human" : "AI 1",
+						p2: data.mode === "HUMAN_AI" ? "AI" : "AI 2",
+					},
+					movesHistory: convertedMoves,
+					winner:
+						data.winner === "human"
+							? 1
+							: data.winner === "AI"
+							? 2
+							: null,
+				};
+
+				setReplayData(convertedData);
+				setCurrentMoveNumber(0); // Start at beginning
+				setBoardState(
+					getBoardStateAtMove(
+						convertedData.movesHistory,
+						0,
+						BOARD_SIZE
+					)
+				);
+				setIsLoading(false);
+			})
+			.catch((err) => {
+				console.error("Failed to fetch replay data:", err);
+				setError("Failed to load replay data. " + err.message);
+				setIsLoading(false);
+			});
 	}, [gameId]); // Refetch if gameId changes
 
 	// --- Update board state when move number changes ---
@@ -9301,30 +9826,21 @@ export default function ReplayPage({ params }: { params: { gameId: string } }) {
 							</span>{" "}
 							{replayData.players.p2}
 						</p>
-						{replayData.winner && (
-							<p>
-								<span className="font-medium text-gray-700">
-									Winner:
-								</span>{" "}
-								Player {replayData.winner}
-							</p>
-						)}
-					</div>
-				</div>
-				{/* Replay Controls */}
-				{/* Use flex-1 so it takes remaining space */}
-				<div className="flex-1 min-h-0 bg-white rounded-lg shadow flex flex-col overflow-y-auto">
-					<div className="p-4 flex-grow">
-						{" "}
-						{/* Padding for potential future content */}
-						<h3 className="text-lg font-semibold text-gray-800 mb-2">
-							Replay Controls
-						</h3>
-						<p className="text-sm text-gray-500">
-							Step through the game.
+						<p>
+							<span className="font-medium text-gray-700">
+								Winner:
+							</span>{" "}
+							{replayData.winner === 1
+								? replayData.players.p1
+								: replayData.winner === 2
+								? replayData.players.p2
+								: "Game in progress"}
 						</p>
 					</div>
-					{/* Control bar at the bottom */}
+				</div>
+
+				{/* Replay Controls */}
+				<div className="flex-none bg-white rounded-lg shadow p-4">
 					<ReplayControlBar
 						currentMove={currentMoveNumber}
 						totalMoves={replayData.movesHistory.length}
@@ -9335,7 +9851,35 @@ export default function ReplayPage({ params }: { params: { gameId: string } }) {
 						onGoToStart={handleGoToStart}
 						onGoToEnd={handleGoToEnd}
 						onSeek={handleSeek}
+						rel="noopener" // Add the required prop
 					/>
+				</div>
+
+				{/* Move List/History */}
+				<div className="flex-grow bg-white rounded-lg shadow p-4 overflow-y-auto">
+					<h3 className="text-base font-medium mb-2 text-gray-700">
+						Move History
+					</h3>
+					<ul className="space-y-1">
+						{replayData.movesHistory.map((move, index) => (
+							<li
+								key={`move-${index}`}
+								className={`text-sm px-2 py-1 rounded ${
+									index + 1 === currentMoveNumber
+										? "bg-blue-100 text-blue-800"
+										: ""
+								}`}
+								onClick={() => handleSeek(index + 1)}
+								style={{ cursor: "pointer" }}
+							>
+								{index + 1}. Player{" "}
+								{move.player === 1
+									? replayData.players.p1
+									: replayData.players.p2}{" "}
+								({move.coords.q}, {move.coords.r})
+							</li>
+						))}
+					</ul>
 				</div>
 			</div>
 		</div>
@@ -9562,50 +10106,110 @@ export default function RootPage() {
 ### <a id="hex-ai-frontend-src-components-dashboard-gamelisttable-tsx"></a>hex-ai-frontend/src/components/dashboard/GameListTable.tsx
 
 ```plaintext
-import React from "react";
+"use client";
+import React, { useEffect, useState } from "react";
 import Link from "next/link"; // For linking to game/replay pages
 
-// TODO: Define props (e.g., list of game objects)
+// Interface for the API response from /api/games/
+interface ApiGame {
+	id: number;
+	player_turn: string; // "human" or "AI"
+	winner: string | null; // "human", "AI", or null
+	mode: string; // "HUMAN_AI" or "AI_AI"
+	human_color: string; // "red" or "blue"
+}
+
+// Frontend representation of a game
 interface Game {
 	id: string;
 	opponent: string;
 	status: "Active" | "Completed" | "Waiting";
 	outcome?: "Win" | "Loss" | "Draw";
-	date: string;
-	mode: "HUMAN_AI" | "AI_AI" | "HUMAN_HUMAN"; // Example modes
+	date: string; // We'll use "Recent" as we don't have actual date from API
+	mode: "HUMAN_AI" | "AI_AI" | "HUMAN_HUMAN";
 }
 
 interface GameListTableProps {
-	// games?: Game[];
+	// No props needed
 }
 
-const GameListTable: React.FC<GameListTableProps> = (/*{ games = [] }*/) => {
-	// Placeholder data
-	const games: Game[] = [
-		{
-			id: "123",
-			opponent: "AI (Medium)",
-			status: "Active",
-			date: "Today",
-			mode: "HUMAN_AI",
-		},
-		{
-			id: "456",
-			opponent: "AI (Hard)",
-			status: "Completed",
-			outcome: "Win",
-			date: "Yesterday",
-			mode: "HUMAN_AI",
-		},
-		{
-			id: "789",
-			opponent: "PlayerX",
-			status: "Completed",
-			outcome: "Loss",
-			date: "2 days ago",
-			mode: "HUMAN_HUMAN",
-		},
-	];
+const GameListTable: React.FC<GameListTableProps> = () => {
+	const [games, setGames] = useState<Game[]>([]);
+	const [isLoading, setIsLoading] = useState<boolean>(true);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		const fetchGames = async () => {
+			setIsLoading(true);
+			setError(null);
+
+			try {
+				const response = await fetch("/api/games/");
+
+				if (!response.ok) {
+					throw new Error(
+						`Failed to fetch games: ${response.status} ${response.statusText}`
+					);
+				}
+
+				const apiGames: ApiGame[] = await response.json();
+
+				// Map API response to frontend Game format
+				const formattedGames: Game[] = apiGames.map((game) => {
+					// Determine game status
+					let status: "Active" | "Completed" | "Waiting";
+					let outcome: "Win" | "Loss" | "Draw" | undefined;
+
+					if (game.winner) {
+						status = "Completed";
+						outcome = game.winner === "human" ? "Win" : "Loss";
+					} else {
+						status = "Active";
+					}
+
+					// For opponent, use AI for HUMAN_AI mode
+					const opponent =
+						game.mode === "HUMAN_AI" ? "AI" : "AI vs AI Match";
+
+					return {
+						id: game.id.toString(),
+						opponent,
+						status,
+						outcome,
+						date: "Recent", // We don't have actual dates from the API
+						mode: game.mode as "HUMAN_AI" | "AI_AI" | "HUMAN_HUMAN",
+					};
+				});
+
+				setGames(formattedGames);
+			} catch (err) {
+				console.error("Error fetching games:", err);
+				setError(
+					err instanceof Error ? err.message : "Failed to fetch games"
+				);
+			} finally {
+				setIsLoading(false);
+			}
+		};
+
+		fetchGames();
+	}, []);
+
+	if (isLoading) {
+		return (
+			<div className="bg-white rounded-lg shadow p-6 text-center">
+				<div className="animate-pulse">Loading games...</div>
+			</div>
+		);
+	}
+
+	if (error) {
+		return (
+			<div className="bg-white rounded-lg shadow p-6 text-center text-red-500">
+				Error: {error}
+			</div>
+		);
+	}
 
 	return (
 		<div className="bg-white rounded-lg shadow overflow-hidden">
@@ -10140,146 +10744,167 @@ import { GameplayControlsProps } from '../../types/hexProps';
 
 // Use the updated GameplayControlsProps interface
 const GameplayControls: React.FC<GameplayControlsProps> = ({
-  className,
-  playerTurn,
-  winner,
-  isDraw, // Added isDraw prop
-  onNewGameClick,
-  onUndoClick,
-  onRedoClick, // Added redo handler prop
-  onRestartClick, // Added restart handler prop
-  onResignClick, // Kept resign handler prop (optional implementation)
-  isInteractionAllowed,
-  canUndo, // Added canUndo prop
-  canRedo, // Added canRedo prop
+	className,
+	playerTurn,
+	winner,
+	isDraw, // Added isDraw prop
+	onNewGameClick,
+	onUndoClick,
+	onRedoClick, // Added redo handler prop
+	onRestartClick, // Added restart handler prop
+	onResignClick, // Kept resign handler prop (optional implementation)
+	isInteractionAllowed,
+	canUndo, // Added canUndo prop
+	canRedo, // Added canRedo prop
+	onAiMoveClick, // Added onAiMoveClick prop
 }) => {
+	// Determine text color for the current player's turn indicator
+	const turnColorClass =
+		playerTurn === 1
+			? "text-red-600"
+			: playerTurn === 2
+			? "text-blue-600"
+			: "text-gray-500"; // Match player colors
 
-  // Determine text color for the current player's turn indicator
-  const turnColorClass = playerTurn === 1 ? 'text-red-600' : playerTurn === 2 ? 'text-blue-600' : 'text-gray-500'; // Match player colors
+	// Determine status message
+	let statusMessage: React.ReactNode;
+	if (winner !== null) {
+		statusMessage = (
+			<p
+				className={`text-lg font-bold ${
+					winner === 1 ? "text-red-600" : "text-blue-600"
+				}`}
+			>
+				Player {winner} Wins! 🎉
+			</p>
+		);
+	} else if (isDraw) {
+		statusMessage = (
+			<p className="text-lg font-bold text-gray-700">Game Draw! 🤝</p>
+		);
+	} else if (playerTurn !== null) {
+		statusMessage = (
+			<p className="text-md">
+				Turn:{" "}
+				<span className={`font-semibold ${turnColorClass}`}>
+					Player {playerTurn}
+				</span>
+			</p>
+		);
+	} else {
+		statusMessage = <p className="text-md text-gray-500">Loading...</p>; // Handle null turn state
+	}
 
-  // Determine status message
-  let statusMessage: React.ReactNode;
-  if (winner !== null) {
-    statusMessage = (
-      <p className={`text-lg font-bold ${winner === 1 ? 'text-red-600' : 'text-blue-600'}`}>
-        Player {winner} Wins! 🎉
-      </p>
-    );
-  } else if (isDraw) {
-    statusMessage = (
-      <p className="text-lg font-bold text-gray-700">
-        Game Draw! 🤝
-      </p>
-    );
-  } else if (playerTurn !== null) {
-    statusMessage = (
-      <p className="text-md">
-        Turn: <span className={`font-semibold ${turnColorClass}`}>
-          Player {playerTurn}
-        </span>
-      </p>
-    );
-  } else {
-     statusMessage = <p className="text-md text-gray-500">Loading...</p>; // Handle null turn state
-  }
+	const isGameOver = winner !== null || isDraw;
 
+	return (
+		// Use flex flex-col h-full to make the container take full height and stack vertically
+		// Apply passed className, default text color is inherited
+		<div className={`flex flex-col h-full ${className}`}>
+			<h2 className="text-xl font-semibold text-gray-800 border-b border-gray-300 pb-2 mb-3">
+				Controls
+			</h2>
 
-  return (
-    // Use flex flex-col h-full to make the container take full height and stack vertically
-    // Apply passed className, default text color is inherited
-    <div className={`flex flex-col h-full ${className}`}>
-      <h2 className="text-xl font-semibold text-gray-800 border-b border-gray-300 pb-2 mb-3">
-        Controls
-      </h2>
+			{/* Game Status Area */}
+			<div className="mb-4 flex-shrink-0">{statusMessage}</div>
 
-      {/* Game Status Area */}
-      <div className="mb-4 flex-shrink-0">
-        {statusMessage}
-      </div>
+			{/* Spacer to push buttons to the bottom */}
+			<div className="flex-grow"></div>
 
-      {/* Spacer to push buttons to the bottom */}
-      <div className="flex-grow"></div>
-
-      {/* Action Buttons Area */}
-      {/* Use flex-shrink-0 to prevent buttons shrinking */}
-      <div className="flex flex-col gap-2 flex-shrink-0">
-          {/* New Game Button (Navigates to Dashboard) */}
-         <button
-           onClick={onNewGameClick}
-           // Always enabled unless maybe mid-action? For now, always enabled.
-           className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
+			{/* Action Buttons Area */}
+			{/* Use flex-shrink-0 to prevent buttons shrinking */}
+			<div className="flex flex-col gap-2 flex-shrink-0">
+				{/* New Game Button (Navigates to Dashboard) */}
+				<button
+					onClick={onNewGameClick}
+					// Always enabled unless maybe mid-action? For now, always enabled.
+					className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
                        bg-indigo-600 text-white hover:bg-indigo-700
                        focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500`}
-         >
-           New Game / Dashboard
-         </button>
+				>
+					New Game / Dashboard
+				</button>
 
-        {/* Restart Button */}
-        {onRestartClick && (
-          <button
-            onClick={onRestartClick}
-            // Disable if interaction not allowed (e.g., connection issue)
-            disabled={!isInteractionAllowed}
-            className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
+				{/* Restart Button */}
+				{onRestartClick && (
+					<button
+						onClick={onRestartClick}
+						// Disable if interaction not allowed (e.g., connection issue)
+						disabled={!isInteractionAllowed}
+						className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
                         bg-yellow-500 text-white
                         hover:bg-yellow-600
                         focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-400
                         disabled:opacity-50 disabled:cursor-not-allowed`}
-          >
-            Restart Game
-          </button>
-        )}
+					>
+						Restart Game
+					</button>
+				)}
 
-        {/* Undo Button */}
-        {onUndoClick && (
-          <button
-            onClick={onUndoClick}
-            // Disable if interaction not allowed OR if undo is not possible
-            disabled={!canUndo || !isInteractionAllowed}
-            className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
+				{/* Undo Button */}
+				{onUndoClick && (
+					<button
+						onClick={onUndoClick}
+						// Disable if interaction not allowed OR if undo is not possible
+						disabled={!canUndo || !isInteractionAllowed}
+						className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
                         bg-gray-500 text-white
                         hover:bg-gray-600
                         focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400
                         disabled:opacity-50 disabled:cursor-not-allowed`}
-          >
-            Undo
-          </button>
-        )}
+					>
+						Undo
+					</button>
+				)}
 
-        {/* Redo Button (Optional - Backend likely doesn't support) */}
-        {onRedoClick && (
-           <button
-             onClick={onRedoClick}
-             // Disable if interaction not allowed OR if redo is not possible
-             disabled={!canRedo || !isInteractionAllowed}
-             className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
+				{/* Redo Button (Optional - Backend likely doesn't support) */}
+				{onRedoClick && (
+					<button
+						onClick={onRedoClick}
+						// Disable if interaction not allowed OR if redo is not possible
+						disabled={!canRedo || !isInteractionAllowed}
+						className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
                          bg-gray-400 text-white
                          hover:bg-gray-500
                          focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-300
                          disabled:opacity-50 disabled:cursor-not-allowed`}
-           >
-             Redo (N/A)
-           </button>
-         )}
+					>
+						Redo (N/A)
+					</button>
+				)}
 
-        {/* Resign Button (Optional) */}
-        {onResignClick && (
-          <button
-            onClick={onResignClick}
-            // Disable if interaction not allowed (game over handled implicitly)
-            disabled={!isInteractionAllowed}
-            className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
+				{/* Resign Button (Optional) */}
+				{onResignClick && (
+					<button
+						onClick={onResignClick}
+						// Disable if interaction not allowed (game over handled implicitly)
+						disabled={!isInteractionAllowed}
+						className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
                         bg-red-600 text-white
                         hover:bg-red-700
                         focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500
                         disabled:opacity-50 disabled:cursor-not-allowed`}
-          >
-            Resign
-          </button>
-        )}
-      </div>
-    </div>
-  );
+					>
+						Resign
+					</button>
+				)}
+
+				{/* AI Move Button (if provided) */}
+				{onAiMoveClick && (
+					<button
+						onClick={onAiMoveClick}
+						disabled={isGameOver}
+						className={`w-full px-4 py-2 rounded font-semibold transition-colors duration-150
+                        bg-purple-600 text-white hover:bg-purple-700
+                        focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500
+                        disabled:opacity-50 disabled:cursor-not-allowed`}
+					>
+						Request AI Move
+					</button>
+				)}
+			</div>
+		</div>
+	);
 };
 
 export default GameplayControls;
@@ -11077,154 +11702,389 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 // Enum for WebSocket connection states
 export enum WebSocketState {
-  CONNECTING = 'CONNECTING',
-  OPEN = 'OPEN',
-  CLOSING = 'CLOSING',
-  CLOSED = 'CLOSED',
-  ERROR = 'ERROR',
+	CONNECTING = "CONNECTING",
+	OPEN = "OPEN",
+	CLOSING = "CLOSING",
+	CLOSED = "CLOSED",
+	ERROR = "ERROR",
+	RECONNECTING = "RECONNECTING", // Add a reconnecting state
 }
 
 // Interface for the hook's return value
 interface UseGameWebSocketReturn {
-  connectionState: WebSocketState;
-  sendMessage: (payload: object) => void;
-  connect: (url: string) => void;
-  disconnect: () => void;
-  lastMessage: any | null;
-  error: Event | Error | null; // Allow Error type for creation failures
+	connectionState: WebSocketState;
+	sendMessage: (payload: object) => void;
+	connect: (url: string) => void;
+	disconnect: () => void;
+	lastMessage: any | null;
+	error: Event | Error | null; // Allow Error type for creation failures
+	reconnect: () => void; // Add explicit reconnect method
 }
 
+// Configuration options interface
+interface WebSocketOptions {
+  reconnectAttempts?: number;
+  reconnectInterval?: number;
+  heartbeatInterval?: number;
+  heartbeatMessage?: object;
+  debug?: boolean;
+}
+
+const DEFAULT_OPTIONS: WebSocketOptions = {
+  reconnectAttempts: 3,
+  reconnectInterval: 2000,
+  heartbeatInterval: 30000,
+  heartbeatMessage: { action: 'ping' },
+  debug: false,
+};
+
 /**
- * Custom hook to manage a WebSocket connection.
+ * Custom hook to manage a WebSocket connection with improved error handling and reconnection.
  * @param onMessageCallback Optional callback function to handle incoming messages.
+ * @param options Configuration options for the WebSocket behavior.
  */
-export function useGameWebSocket(onMessageCallback?: (message: any) => void): UseGameWebSocketReturn {
-  const [connectionState, setConnectionState] = useState<WebSocketState>(WebSocketState.CLOSED);
-  const [lastMessage, setLastMessage] = useState<any | null>(null);
-  const [error, setError] = useState<Event | Error | null>(null); // Allow Error type
-  const ws = useRef<WebSocket | null>(null);
+export function useGameWebSocket(
+	onMessageCallback?: (message: any) => void,
+	options?: Partial<WebSocketOptions>
+): UseGameWebSocketReturn {
+	const [connectionState, setConnectionState] = useState<WebSocketState>(
+		WebSocketState.CLOSED
+	);
+	const [lastMessage, setLastMessage] = useState<any | null>(null);
+	const [error, setError] = useState<Event | Error | null>(null);
 
-  // Function to connect to a WebSocket URL
-  const connect = useCallback((url: string) => {
-    // Prevent multiple connections if already open or connecting
-    if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) {
-      console.log(`WebSocket already ${ws.current.readyState === WebSocket.OPEN ? 'open' : 'connecting'}.`);
-      return;
-    }
+	const ws = useRef<WebSocket | null>(null);
+	const reconnectCount = useRef<number>(0);
+	const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+	const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
+	const lastPongRef = useRef<number>(Date.now());
+	const urlRef = useRef<string>("");
 
-    // Clean up previous connection if any (ensures disconnect logic runs)
-    if (ws.current) {
-       // Set state to CLOSING before explicitly closing
-       setConnectionState(WebSocketState.CLOSING);
-       ws.current.close();
-       ws.current = null; // Clear ref immediately after calling close
-       console.log("Cleaned up previous WebSocket connection before reconnecting.");
-    }
+	// Merge default options with provided options
+	const mergedOptions = { ...DEFAULT_OPTIONS, ...options };
+	const {
+		reconnectAttempts,
+		reconnectInterval,
+		heartbeatInterval,
+		heartbeatMessage,
+		debug,
+	} = mergedOptions;
 
+	// Logger function that respects the debug option
+	const log = useCallback(
+		(type: "log" | "warn" | "error", ...args: any[]) => {
+			if (debug || type === "error") {
+				console[type](`[WebSocket]`, ...args);
+			}
+		},
+		[debug]
+	);
 
-    console.log(`Connecting to ${url}...`);
-    setConnectionState(WebSocketState.CONNECTING);
-    setError(null);
-    setLastMessage(null);
+	// Setup heartbeat to keep connection alive
+	const setupHeartbeat = useCallback(() => {
+		if (heartbeatTimerRef.current) {
+			clearInterval(heartbeatTimerRef.current);
+		}
 
-    try {
-      ws.current = new WebSocket(url);
+		if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+			lastPongRef.current = Date.now();
 
-      ws.current.onopen = () => {
-        console.log('WebSocket connection opened.');
-        setConnectionState(WebSocketState.OPEN);
-        setError(null);
-      };
+			heartbeatTimerRef.current = setInterval(() => {
+				if (ws.current?.readyState === WebSocket.OPEN) {
+					try {
+						// Send heartbeat message
+						ws.current.send(JSON.stringify(heartbeatMessage));
+						log("log", "Heartbeat sent");
 
-      ws.current.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          console.log('WebSocket message received:', message);
-          setLastMessage(message);
-          if (onMessageCallback) {
-            onMessageCallback(message);
-          }
-        } catch (e) {
-          console.error('Failed to parse WebSocket message:', e, 'Raw data:', event.data);
-        }
-      };
+						// Check if we've missed too many pongs
+						const timeSinceLastPong =
+							Date.now() - lastPongRef.current;
+						if (timeSinceLastPong > heartbeatInterval * 2) {
+							log(
+								"warn",
+								"No pong received for too long, reconnecting"
+							);
+							attemptReconnect();
+						}
+					} catch (e) {
+						log("error", "Failed to send heartbeat:", e);
+						attemptReconnect();
+					}
+				} else {
+					clearInterval(heartbeatTimerRef.current!);
+					heartbeatTimerRef.current = null;
+				}
+			}, heartbeatInterval);
+		}
+	}, [heartbeatInterval, heartbeatMessage, log]);
 
-      ws.current.onerror = (event) => {
-        console.error('WebSocket error:', event);
-        // Check if connection is already closing/closed to avoid overwriting state
-        if (connectionState !== WebSocketState.CLOSING && connectionState !== WebSocketState.CLOSED) {
-             setConnectionState(WebSocketState.ERROR);
-             setError(event);
-        }
-      };
+	// Attempt to reconnect to the WebSocket
+	const attemptReconnect = useCallback(() => {
+		if (
+			reconnectCount.current < reconnectAttempts! &&
+			connectionState !== WebSocketState.CONNECTING &&
+			connectionState !== WebSocketState.RECONNECTING
+		) {
+			log(
+				"log",
+				`Attempting to reconnect (${
+					reconnectCount.current + 1
+				}/${reconnectAttempts})`
+			);
+			setConnectionState(WebSocketState.RECONNECTING);
 
-      ws.current.onclose = (event) => {
-        console.log(`WebSocket connection closed: Code=${event.code}, Reason=${event.reason}`);
-        // Only update state if it wasn't an intentional close initiated by disconnect() or a reconnect attempt
-         if (connectionState !== WebSocketState.CLOSING) {
-             setConnectionState(WebSocketState.CLOSED);
-             setError(null); // Clear error on close unless it was an error state already
-         }
-        // Check if ws.current still points to the closing socket before nulling
-        // This check might be less critical now due to immediate nulling in disconnect/reconnect
-        if (ws.current && ws.current.url === url) {
-             ws.current = null;
-        }
-      };
+			if (reconnectTimerRef.current) {
+				clearTimeout(reconnectTimerRef.current);
+			}
 
-    } catch (err) {
-        console.error("Failed to create WebSocket:", err);
-        setConnectionState(WebSocketState.ERROR);
-        // Store the actual error object
-        setError(err instanceof Error ? err : new Error('WebSocket creation failed'));
-        ws.current = null;
-    }
-    // ** THE FIX IS HERE **
-    // Removed `connectionState` from the dependency array.
-    // `connect` should only be recreated if `onMessageCallback` changes.
-  }, [onMessageCallback]); // <--- FIXED DEPENDENCY ARRAY
+			reconnectTimerRef.current = setTimeout(() => {
+				reconnectCount.current += 1;
+				connect(urlRef.current);
+			}, reconnectInterval);
+		} else if (reconnectCount.current >= reconnectAttempts!) {
+			log(
+				"error",
+				`Max reconnect attempts (${reconnectAttempts}) reached`
+			);
+			setConnectionState(WebSocketState.ERROR);
+			setError(
+				new Error(
+					`Failed to reconnect after ${reconnectAttempts} attempts`
+				)
+			);
+			reconnectCount.current = 0;
+		}
+	}, [connectionState, reconnectAttempts, reconnectInterval, log]);
 
-  // Function to disconnect the WebSocket
-  const disconnect = useCallback(() => {
-    if (ws.current) {
-      console.log('Closing WebSocket connection intentionally...');
-      setConnectionState(WebSocketState.CLOSING); // Set state *before* closing
-      ws.current.close();
-      ws.current = null; // Clear ref immediately
-    }
-  }, []); // No dependencies needed
+	// Function to connect to a WebSocket URL
+	const connect = useCallback(
+		(url: string) => {
+			// Store the URL for potential reconnections
+			urlRef.current = url;
 
-  // Function to send a JSON message
-  const sendMessage = useCallback((payload: object) => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      try {
-        const messageString = JSON.stringify(payload);
-        console.log('Sending WebSocket message:', messageString);
-        ws.current.send(messageString);
-      } catch (e) {
-        console.error('Failed to stringify or send WebSocket message:', e);
-      }
-    } else {
-      console.warn(`Cannot send message: WebSocket is not open (State: ${ws.current?.readyState})`);
-    }
-  }, []); // No dependencies needed
+			// Prevent multiple connections if already open or connecting
+			if (
+				ws.current &&
+				(ws.current.readyState === WebSocket.OPEN ||
+					ws.current.readyState === WebSocket.CONNECTING)
+			) {
+				log(
+					"log",
+					`WebSocket already ${
+						ws.current.readyState === WebSocket.OPEN
+							? "open"
+							: "connecting"
+					}.`
+				);
+				return;
+			}
 
-   // Effect to disconnect on component unmount
-   useEffect(() => {
-    // Store the current WebSocket ref in a variable accessible by the cleanup function
-    const currentWs = ws.current;
-    return () => {
-      // Use the captured ref in the cleanup
-      if (currentWs) {
-        console.log("Disconnecting WebSocket on component unmount");
-        // No need to set state here as the component is unmounting
-        currentWs.close();
-      }
-    };
-  }, []); // Empty dependency array ensures this runs only on mount and unmount
+			// Clean up previous connection if any
+			cleanup();
 
+			log("log", `Connecting to ${url}...`);
+			setConnectionState(WebSocketState.CONNECTING);
+			setError(null);
+			setLastMessage(null);
 
-  return { connectionState, sendMessage, connect, disconnect, lastMessage, error };
+			try {
+				ws.current = new WebSocket(url);
+
+				ws.current.onopen = () => {
+					log("log", "WebSocket connection opened.");
+					setConnectionState(WebSocketState.OPEN);
+					setError(null);
+					reconnectCount.current = 0; // Reset reconnect counter on successful connection
+					setupHeartbeat(); // Set up the heartbeat for this connection
+				};
+
+				ws.current.onmessage = (event) => {
+					lastPongRef.current = Date.now(); // Update last pong time on any message
+
+					try {
+						const message = JSON.parse(event.data);
+						log("log", "Message received:", message);
+						setLastMessage(message);
+
+						// Check if this is a pong response
+						if (message.type === "pong") {
+							log("log", "Pong received");
+							return;
+						}
+
+						if (onMessageCallback) {
+							onMessageCallback(message);
+						}
+					} catch (e) {
+						log(
+							"error",
+							"Failed to parse WebSocket message:",
+							e,
+							"Raw data:",
+							event.data
+						);
+					}
+				};
+
+				ws.current.onerror = (event) => {
+					log("error", "WebSocket error:", event);
+					// Don't override RECONNECTING state with ERROR
+					if (connectionState !== WebSocketState.RECONNECTING) {
+						setConnectionState(WebSocketState.ERROR);
+						setError(event);
+					}
+
+					// Attempt to reconnect on error
+					attemptReconnect();
+				};
+
+				ws.current.onclose = (event) => {
+					log(
+						"log",
+						`WebSocket connection closed: Code=${event.code}, Reason=${event.reason}`
+					);
+
+					// Clean up heartbeat timer
+					if (heartbeatTimerRef.current) {
+						clearInterval(heartbeatTimerRef.current);
+						heartbeatTimerRef.current = null;
+					}
+
+					// Only update state if it wasn't an intentional close
+					if (
+						connectionState !== WebSocketState.CLOSING &&
+						connectionState !== WebSocketState.RECONNECTING
+					) {
+						setConnectionState(WebSocketState.CLOSED);
+
+						// Attempt to reconnect on unintentional close
+						if (event.code !== 1000) {
+							// Normal closure
+							attemptReconnect();
+						}
+					}
+
+					// Null the ref only if it matches the current URL
+					if (ws.current && ws.current.url === url) {
+						ws.current = null;
+					}
+				};
+			} catch (err) {
+				log("error", "Failed to create WebSocket:", err);
+				setConnectionState(WebSocketState.ERROR);
+				setError(
+					err instanceof Error
+						? err
+						: new Error("WebSocket creation failed")
+				);
+				ws.current = null;
+
+				// Attempt to reconnect on creation failure
+				attemptReconnect();
+			}
+		},
+		[
+			onMessageCallback,
+			attemptReconnect,
+			setupHeartbeat,
+			log,
+			connectionState,
+		]
+	);
+
+	// Explicit reconnect function
+	const reconnect = useCallback(() => {
+		log("log", "Manual reconnect requested");
+		reconnectCount.current = 0; // Reset counter for manual reconnect
+		connect(urlRef.current);
+	}, [connect, log]);
+
+	// Cleanup function to handle disconnection
+	const cleanup = useCallback(() => {
+		if (ws.current) {
+			log("log", "Cleaning up existing connection");
+
+			// Clear timers
+			if (heartbeatTimerRef.current) {
+				clearInterval(heartbeatTimerRef.current);
+				heartbeatTimerRef.current = null;
+			}
+
+			if (reconnectTimerRef.current) {
+				clearTimeout(reconnectTimerRef.current);
+				reconnectTimerRef.current = null;
+			}
+
+			// Close WebSocket if it's not already closed
+			if (
+				ws.current.readyState !== WebSocket.CLOSED &&
+				ws.current.readyState !== WebSocket.CLOSING
+			) {
+				setConnectionState(WebSocketState.CLOSING);
+				ws.current.close();
+			}
+
+			ws.current = null;
+		}
+	}, [log]);
+
+	// Function to disconnect the WebSocket
+	const disconnect = useCallback(() => {
+		log("log", "Disconnect requested");
+		cleanup();
+		setConnectionState(WebSocketState.CLOSED);
+	}, [cleanup, log]);
+
+	// Function to send a JSON message with retry capability
+	const sendMessage = useCallback(
+		(payload: object) => {
+			if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+				try {
+					const messageString = JSON.stringify(payload);
+					log("log", "Sending message:", messageString);
+					ws.current.send(messageString);
+					return true;
+				} catch (e) {
+					log("error", "Failed to stringify or send message:", e);
+					return false;
+				}
+			} else {
+				log(
+					"warn",
+					`Cannot send message: WebSocket is not open (State: ${ws.current?.readyState})`
+				);
+
+				// Attempt reconnection if not open
+				if (
+					connectionState !== WebSocketState.CONNECTING &&
+					connectionState !== WebSocketState.RECONNECTING
+				) {
+					attemptReconnect();
+				}
+
+				return false;
+			}
+		},
+		[connectionState, attemptReconnect, log]
+	);
+
+	// Effect to disconnect on component unmount
+	useEffect(() => {
+		return () => {
+			log("log", "Cleaning up WebSocket on unmount");
+			cleanup();
+		};
+	}, [cleanup, log]);
+
+	return {
+		connectionState,
+		sendMessage,
+		connect,
+		disconnect,
+		lastMessage,
+		error,
+		reconnect,
+	};
 }
 
 ```
@@ -11460,8 +12320,13 @@ export function xyToCube(x: number, y: number): CubeCoordinates | null {
 // src/store/gameStore.ts
 import { create } from 'zustand';
 import { CubeCoordinates } from '../types/hexProps'; // Assuming hexProps defines PlayerColors too
-import { computeGridCoordinates, cubeToKey, keyToCube, cubeToXY, xyToCube } from '../lib/coordinates';
-import { WebSocketState } from '@/hooks/useGameWebSocket';
+import {
+	computeGridCoordinates,
+	cubeToKey,
+	cubeToXY,
+	xyToCube,
+} from "../lib/coordinates";
+import { WebSocketState } from "@/hooks/useGameWebSocket";
 
 const BOARD_SIZE = 11;
 
@@ -11473,12 +12338,12 @@ const BOARD_SIZE = 11;
  * @returns A Map where keys are "q,r,s" strings and values are 0, 1, or 2.
  */
 const initializeBoardState = (size: number): Map<string, 0 | 1 | 2> => {
-    const state = new Map<string, 0 | 1 | 2>();
-    const initialCoords = computeGridCoordinates(size);
-    initialCoords.forEach(coords => {
-        state.set(cubeToKey(coords), 0); // 0 represents an empty hex
-    });
-    return state;
+	const state = new Map<string, 0 | 1 | 2>();
+	const initialCoords = computeGridCoordinates(size);
+	initialCoords.forEach((coords) => {
+		state.set(cubeToKey(coords), 0); // 0 represents an empty hex
+	});
+	return state;
 };
 
 /**
@@ -11487,17 +12352,21 @@ const initializeBoardState = (size: number): Map<string, 0 | 1 | 2> => {
  * @param backendPlayer - The player identifier string from the backend.
  * @returns 1, 2, or null.
  */
-const mapBackendPlayerToFrontend = (backendPlayer: string | null): 1 | 2 | null => {
-    // Mapping based on backend code (models.py, consumers.py)
-    // Assuming Red is Player 1, Blue is Player 2
-    // Human is assumed P1 if red, P2 if blue (handled by checking human_color later if needed)
-    // AI is assumed P2 if human is red, P1 if human is blue
-    // AI_1 is assumed P1 (Red), AI_2 is assumed P2 (Blue) in AI_AI mode
-    if (backendPlayer === 'human' || backendPlayer === 'AI_1') return 1; // Player 1 (Red)
-    if (backendPlayer === 'AI' || backendPlayer === 'AI_2') return 2; // Player 2 (Blue)
-    if (backendPlayer === null || backendPlayer === 'draw') return null; // Game ongoing, Draw, or explicitly null winner
-    console.warn(`Unknown backend player identifier encountered: ${backendPlayer}`);
-    return null; // Return null for unknown cases
+const mapBackendPlayerToFrontend = (
+	backendPlayer: string | null
+): 1 | 2 | null => {
+	// Mapping based on backend code (models.py, consumers.py)
+	// Assuming Red is Player 1, Blue is Player 2
+	// Human is assumed P1 if red, P2 if blue (handled by checking human_color later if needed)
+	// AI is assumed P2 if human is red, P1 if human is blue
+	// AI_1 is assumed P1 (Red), AI_2 is assumed P2 (Blue) in AI_AI mode
+	if (backendPlayer === "human" || backendPlayer === "AI_1") return 1; // Player 1 (Red)
+	if (backendPlayer === "AI" || backendPlayer === "AI_2") return 2; // Player 2 (Blue)
+	if (backendPlayer === null || backendPlayer === "draw") return null; // Game ongoing, Draw, or explicitly null winner
+	console.warn(
+		`Unknown backend player identifier encountered: ${backendPlayer}`
+	);
+	return null; // Return null for unknown cases
 };
 
 /**
@@ -11506,318 +12375,639 @@ const mapBackendPlayerToFrontend = (backendPlayer: string | null): 1 | 2 | null 
  * Assumes backendBoard[row][col] indexing.
  * @returns A Map representing the frontend board state.
  */
-const mapBackendBoard = (backendBoard: (0 | 1 | -1)[][]): Map<string, 0 | 1 | 2> => {
-    // Validate backendBoard structure
-    if (!backendBoard || !Array.isArray(backendBoard) || backendBoard.length !== BOARD_SIZE) {
-        console.error("Invalid backend board structure received. Expected 11x11 array.", backendBoard);
-        return initializeBoardState(BOARD_SIZE); // Return empty board on error
-    }
+const mapBackendBoard = (
+	backendBoard: (0 | 1 | -1)[][]
+): Map<string, 0 | 1 | 2> => {
+	// Validate backendBoard structure
+	if (
+		!backendBoard ||
+		!Array.isArray(backendBoard) ||
+		backendBoard.length !== BOARD_SIZE
+	) {
+		console.error(
+			"Invalid backend board structure received. Expected 11x11 array.",
+			backendBoard
+		);
+		return initializeBoardState(BOARD_SIZE); // Return empty board on error
+	}
 
-    const frontendBoard = new Map<string, 0 | 1 | 2>();
-    // Use clearer variable names: 'row' for backend 'x', 'col' for backend 'y'
-    for (let row = 0; row < BOARD_SIZE; row++) {
-        if (!Array.isArray(backendBoard[row]) || backendBoard[row].length !== BOARD_SIZE) {
-            console.error(`Invalid backend board row structure at index row=${row}.`, backendBoard[row]);
-            continue; // Skip invalid row
-        }
-        for (let col = 0; col < BOARD_SIZE; col++) {
-            // Convert backend row, col indices to frontend CubeCoordinates
-            // xyToCube expects (rowIndex, columnIndex)
-            const coords = xyToCube(row, col); // Pass row index first, then column index
+	const frontendBoard = new Map<string, 0 | 1 | 2>();
+	// Use clearer variable names: 'row' for backend 'x', 'col' for backend 'y'
+	for (let row = 0; row < BOARD_SIZE; row++) {
+		if (
+			!Array.isArray(backendBoard[row]) ||
+			backendBoard[row].length !== BOARD_SIZE
+		) {
+			console.error(
+				`Invalid backend board row structure at index row=${row}.`,
+				backendBoard[row]
+			);
+			continue; // Skip invalid row
+		}
+		for (let col = 0; col < BOARD_SIZE; col++) {
+			// Convert backend row, col indices to frontend CubeCoordinates
+			// xyToCube expects (rowIndex, columnIndex)
+			const coords = xyToCube(row, col); // Pass row index first, then column index
 
-            if (coords) {
-                const backendValue = backendBoard[row][col];
-                // Backend: 1=Red(P1), -1=Blue(P2), 0=Empty
-                // Frontend: 1=P1, 2=P2, 0=Empty
-                const frontendValue = backendValue === 1 ? 1 : backendValue === -1 ? 2 : 0;
-                frontendBoard.set(cubeToKey(coords), frontendValue as 0 | 1 | 2);
-            } else {
-                // This should ideally not happen if BOARD_SIZE is consistent
-                console.warn(`Could not map backend board coordinates row=${row}, col=${col} to valid CubeCoordinates.`);
-            }
-        }
-    }
+			if (coords) {
+				const backendValue = backendBoard[row][col];
+				// Backend: 1=Red(P1), -1=Blue(P2), 0=Empty
+				// Frontend: 1=P1, 2=P2, 0=Empty
+				const frontendValue =
+					backendValue === 1 ? 1 : backendValue === -1 ? 2 : 0;
+				frontendBoard.set(
+					cubeToKey(coords),
+					frontendValue as 0 | 1 | 2
+				);
+			} else {
+				// This should ideally not happen if BOARD_SIZE is consistent
+				console.warn(
+					`Could not map backend board coordinates row=${row}, col=${col} to valid CubeCoordinates.`
+				);
+			}
+		}
+	}
 
-    // Optional: Verify all expected hexes are present (good for debugging)
-    const expectedKeys = computeGridCoordinates(BOARD_SIZE).map(cubeToKey);
-    expectedKeys.forEach(key => {
-        if (!frontendBoard.has(key)) {
-            console.warn(`Frontend board state missing expected key after mapping: ${key}. Setting to empty.`);
-            frontendBoard.set(key, 0);
-        }
-    });
+	// Optional: Verify all expected hexes are present (good for debugging)
+	const expectedKeys = computeGridCoordinates(BOARD_SIZE).map(cubeToKey);
+	expectedKeys.forEach((key) => {
+		if (!frontendBoard.has(key)) {
+			console.warn(
+				`Frontend board state missing expected key after mapping: ${key}. Setting to empty.`
+			);
+			frontendBoard.set(key, 0);
+		}
+	});
 
-    return frontendBoard;
+	return frontendBoard;
 };
 
+// --- New Message Queue Management ---
+interface QueuedMessage {
+	payload: object;
+	timestamp: number;
+	retries: number;
+	id: string;
+}
+
+/**
+ * Creates a unique ID for a queued message
+ */
+const createMessageId = (): string => {
+	return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+};
+
+// Define interfaces for expected backend data structures
+interface BackendMoveHistoryItem {
+	x: number;
+	y: number;
+	player: number; // Assuming backend uses 1/-1 or similar numeric representation
+}
+
+interface BackendGameState {
+	board: (0 | 1 | -1)[][];
+	player_turn: string | null; // 'human', 'AI', 'AI_1', 'AI_2', null
+	moves_history: BackendMoveHistoryItem[];
+	winner: string | null; // 'human', 'AI', 'AI_1', 'AI_2', 'draw', null
+	mode?: "HUMAN_AI" | "AI_AI";
+	human_color?: "red" | "blue";
+	win_probability?: { [key: string]: number };
+	id?: number | string; // Game ID
+	// Add other potential fields if known
+}
+
+interface BackendErrorData {
+	message: string;
+	// Add other potential error fields if known
+}
 
 // --- State Shape ---
 type GameState = {
-    gameId: string | null;
-    boardState: Map<string, 0 | 1 | 2>; // Key: "q,r,s", Value: 0 (empty), 1 (P1), 2 (P2)
-    playerTurn: 1 | 2 | null; // 1 (P1 Red), 2 (P2 Blue), null (Game Over?)
-    humanPlayerColor: 'red' | 'blue' | null; // From backend 'human_color' field
-    moves: number; // Total moves made in the game
-    highlightedHexes: CubeCoordinates[]; // For visually highlighting the last move
-    winner: 1 | 2 | null; // 1 (Red wins), 2 (Blue wins), null (Ongoing or Draw)
-    isDraw: boolean; // Explicitly track draw state from backend 'winner' field
-    winProbability: { [key: string]: number } | null; // e.g., { "human": 0.6, "AI": 0.4 }
-    mode: 'HUMAN_AI' | 'AI_AI' | null; // Game mode
-    connectionState: WebSocketState; // WebSocket connection status
-    lastBackendError: string | null; // Store last error message from backend
-    // Function provided by the WebSocket hook to send messages
-    sendMessage: (payload: object) => void;
+	gameId: string | null;
+	boardState: Map<string, 0 | 1 | 2>; // Key: "q,r,s", Value: 0 (empty), 1 (P1), 2 (P2)
+	playerTurn: 1 | 2 | null; // 1 (P1 Red), 2 (P2 Blue), null (Game Over?)
+	humanPlayerColor: "red" | "blue" | null; // From backend 'human_color' field
+	moves: number; // Total moves made in the game
+	highlightedHexes: CubeCoordinates[]; // For visually highlighting the last move
+	winner: 1 | 2 | null; // 1 (Red wins), 2 (Blue wins), null (Ongoing or Draw)
+	isDraw: boolean; // Explicitly track draw state from backend 'winner' field
+	winProbability: { [key: string]: number } | null; // e.g., { "human": 0.6, "AI": 0.4 }
+	mode: "HUMAN_AI" | "AI_AI" | null; // Game mode
+	connectionState: WebSocketState; // WebSocket connection status
+	lastBackendError: string | null; // Store last error message from backend
+	reconnectInProgress: boolean; // Flag to track if a reconnection is in progress
+	messageQueue: QueuedMessage[]; // Queue for messages that need to be sent
+	isProcessingQueue: boolean; // Flag to prevent multiple queue processors
+	// Function provided by the WebSocket hook to send messages
+	sendMessage: (payload: object) => boolean;
+	reconnect: () => void; // Function provided by WebSocket hook to reconnect
 };
 
 // Actions available in the store
 interface GameStoreActions {
-    handleGameStateUpdate: (backendData: any) => void; // Process message from backend
-    setConnectionState: (state: WebSocketState) => void; // Update WS connection state
-    setGameId: (gameId: string | null) => void; // Set the current game ID
-    setLastError: (error: string | null) => void; // Store backend error message
-    // highlightLastMove: (coords: CubeCoordinates | null) => void; // Highlight logic is now inside handleGameStateUpdate
-    setSendMessage: (sender: (payload: object) => void) => void; // Receive sendMessage func from hook
-    requestMove: (coords: CubeCoordinates) => void; // Request backend to make a move
-    requestUndo: () => void; // Request backend to undo last move
-    requestRedo: () => void; // (Not implemented in backend API doc)
-    requestRestart: () => void; // Request backend to restart game
-    requestAiMove: () => void; // Request backend for AI move (mainly for AI vs AI?)
-    resetLocalState: () => void; // Reset store to initial state (except sendMessage)
+	handleGameStateUpdate: (backendData: BackendGameState) => void; // Process message from backend
+	handleErrorMessage: (errorData: BackendErrorData) => void; // Process error from backend
+	setConnectionState: (state: WebSocketState) => void; // Update WS connection state
+	setGameId: (gameId: string | null) => void; // Set the current game ID
+	setLastError: (error: string | null) => void; // Store backend error message
+	setSendMessage: (sender: (payload: object) => boolean) => void; // Receive sendMessage func from hook
+	setReconnect: (reconnectFunc: () => void) => void; // Set reconnect function
+
+	// Message queueing functions
+	enqueueMessage: (payload: object) => void; // Add message to queue
+	processMessageQueue: () => void; // Process the message queue
+	removeMessageFromQueue: (id: string) => void; // Remove message after successful send
+
+	// Game action requests
+	requestMove: (coords: CubeCoordinates) => void; // Request backend to make a move
+	requestUndo: () => void; // Request backend to undo last move
+	requestRedo: () => void; // (Not implemented in backend API doc)
+	requestRestart: () => void; // Request backend to restart game
+	requestAiMove: () => void; // Request backend for AI move (mainly for AI vs AI?)
+	resetLocalState: () => void; // Reset store to initial state (except sendMessage)
 }
 
 // --- Store Definition ---
 const initialState: GameState = {
-    gameId: null,
-    boardState: initializeBoardState(BOARD_SIZE),
-    playerTurn: null, // Start as null, wait for first game_state
-    humanPlayerColor: null,
-    moves: 0,
-    highlightedHexes: [],
-    winner: null,
-    isDraw: false,
-    winProbability: null,
-    mode: null,
-    connectionState: WebSocketState.CLOSED,
-    lastBackendError: null,
-    // Placeholder sendMessage function, will be replaced by the hook
-    sendMessage: (payload) => {
-        console.warn("sendMessage called before WebSocket was ready.", payload);
-    },
+	gameId: null,
+	boardState: initializeBoardState(BOARD_SIZE),
+	playerTurn: null, // Start as null, wait for first game_state
+	humanPlayerColor: null,
+	moves: 0,
+	highlightedHexes: [],
+	winner: null,
+	isDraw: false,
+	winProbability: null,
+	mode: null,
+	connectionState: WebSocketState.CLOSED,
+	lastBackendError: null,
+	reconnectInProgress: false,
+	messageQueue: [],
+	isProcessingQueue: false,
+	// Placeholder sendMessage function, will be replaced by the hook
+	sendMessage: (payload) => {
+		console.warn("sendMessage called before WebSocket was ready.", payload);
+		return false; // Indicate failure
+	},
+	reconnect: () => {
+		console.warn("reconnect called before WebSocket was ready.");
+	},
 };
 
-export const useGameStore = create<GameState & GameStoreActions>((set, get) => ({
-    ...initialState,
+export const useGameStore = create<GameState & GameStoreActions>(
+	(set, get) => ({
+		...initialState,
 
-    // --- Actions ---
+		// --- Actions ---
 
-    setGameId: (gameId) => set({ gameId }),
+		setGameId: (gameId) => set({ gameId }),
 
-    setConnectionState: (state) => set({ connectionState: state }),
+		setConnectionState: (state) => {
+			// Update reconnect progress flag
+			let reconnectInProgress = get().reconnectInProgress;
+			if (state === WebSocketState.RECONNECTING) {
+				reconnectInProgress = true;
+			} else if (state === WebSocketState.OPEN) {
+				reconnectInProgress = false;
+				// Process queue when connection is established
+				setTimeout(() => get().processMessageQueue(), 500);
+			}
 
-    setLastError: (error) => set({ lastBackendError: error }),
+			set({
+				connectionState: state,
+				reconnectInProgress,
+				// Clear error when connection is open
+				lastBackendError:
+					state === WebSocketState.OPEN
+						? null
+						: get().lastBackendError,
+			});
+		},
 
-    // Called by the useGameWebSocket hook once the connection is open
-    setSendMessage: (sender) => set({ sendMessage: sender }),
+		setLastError: (error) => set({ lastBackendError: error }),
 
-    /**
-     * Processes game state updates received from the backend via WebSocket.
-     * @param backendData - The 'data' object from the backend message (type 'game_state' or 'game_update').
-     * Expected fields based on HexGameSerializer.
-     */
-    handleGameStateUpdate: (backendData) => {
-        console.log("Store: Handling backend game state update:", backendData);
+		// Called by the useGameWebSocket hook once the connection is open
+		setSendMessage: (sender) => set({ sendMessage: sender }),
 
-        // Basic validation of received data structure
-        if (!backendData || typeof backendData !== 'object') {
-             console.error("Store Error: Received invalid or non-object game state data:", backendData);
-             set({ lastBackendError: "Received invalid game state format from server." });
-             return;
-        }
-        // Check for essential fields (can add more checks as needed)
-         if (!backendData.board || backendData.player_turn === undefined || !backendData.moves_history) {
-             console.error("Store Error: Received incomplete game state data (missing board, player_turn, or moves_history):", backendData);
-             set({ lastBackendError: "Received incomplete game state from server." });
-             return;
-         }
+		// Set the reconnect function from the hook
+		setReconnect: (reconnectFunc) => set({ reconnect: reconnectFunc }),
 
+		// Handle messages coming from the backend
+		handleGameStateUpdate: (backendData) => {
+			console.log(
+				"Store: Handling backend game state update:",
+				backendData
+			);
 
-        try {
-            const newBoardState = mapBackendBoard(backendData.board);
-            const currentPlayer = mapBackendPlayerToFrontend(backendData.player_turn);
-            const winnerPlayer = mapBackendPlayerToFrontend(backendData.winner); // Handles 'human', 'AI', null, 'AI_1', 'AI_2'
-            const isDraw = backendData.winner === 'draw'; // Check specifically for draw
+			// Basic validation of received data structure
+			if (!backendData || typeof backendData !== "object") {
+				console.error(
+					"Store Error: Received invalid or non-object game state data:",
+					backendData
+				);
+				set({
+					lastBackendError:
+						"Received invalid game state format from server.",
+				});
+				return;
+			}
+			// Check for essential fields
+			if (
+				!backendData.board ||
+				backendData.player_turn === undefined ||
+				!backendData.moves_history
+			) {
+				console.error(
+					"Store Error: Received incomplete game state data (missing board, player_turn, or moves_history):",
+					backendData
+				);
+				set({
+					lastBackendError:
+						"Received incomplete game state from server.",
+				});
+				return;
+			}
 
-            // Determine the last move coordinates from moves_history to highlight
-            let lastMoveCoords: CubeCoordinates | null = null;
-            if (Array.isArray(backendData.moves_history) && backendData.moves_history.length > 0) {
-                const lastAction = backendData.moves_history[backendData.moves_history.length - 1];
-                // Check if last action has x and y (as per backend model)
-                if (lastAction && lastAction.x !== undefined && lastAction.y !== undefined) {
-                    // Convert backend x (row), y (col) to frontend CubeCoordinates
-                    lastMoveCoords = xyToCube(lastAction.x, lastAction.y);
-                    if (!lastMoveCoords) {
-                        console.warn(`Store: Could not convert backend last move x=${lastAction.x}, y=${lastAction.y} to CubeCoordinates.`);
-                    } else {
-                         console.log(`Store: Highlighting last move at Cube (${lastMoveCoords.q}, ${lastMoveCoords.r}, ${lastMoveCoords.s}) from backend XY (${lastAction.x}, ${lastAction.y})`);
-                    }
-                }
-            }
+			try {
+				const newBoardState = mapBackendBoard(backendData.board);
+				const currentPlayer = mapBackendPlayerToFrontend(
+					backendData.player_turn
+				);
+				const winnerPlayer = mapBackendPlayerToFrontend(
+					backendData.winner
+				); // Handles 'human', 'AI', null, 'AI_1', 'AI_2'
+				const isDraw = backendData.winner === "draw"; // Check specifically for draw
 
-            // Update the store state
-            set({
-                boardState: newBoardState,
-                playerTurn: currentPlayer,
-                winner: winnerPlayer, // Store 1, 2, or null
-                isDraw: isDraw, // Store draw state
-                // Use moves_history length for move count
-                moves: Array.isArray(backendData.moves_history) ? backendData.moves_history.length : 0,
-                mode: backendData.mode ?? get().mode, // Update mode if provided
-                humanPlayerColor: backendData.human_color ?? get().humanPlayerColor, // Update human color if provided
-                winProbability: backendData.win_probability ?? null, // Update win probability (handle null)
-                highlightedHexes: lastMoveCoords ? [lastMoveCoords] : [], // Highlight based on history
-                lastBackendError: null, // Clear previous errors on successful update
-                gameId: backendData.id ? String(backendData.id) : get().gameId, // Update gameId if present (ensure string)
-            });
-             console.log("Store: State updated successfully.");
+				// Determine the last move coordinates from moves_history to highlight
+				let lastMoveCoords: CubeCoordinates | null = null;
+				if (
+					Array.isArray(backendData.moves_history) &&
+					backendData.moves_history.length > 0
+				) {
+					const lastAction =
+						backendData.moves_history[
+							backendData.moves_history.length - 1
+						];
+					// Check if last action has x and y (as per backend model)
+					if (
+						lastAction &&
+						lastAction.x !== undefined &&
+						lastAction.y !== undefined
+					) {
+						// Convert backend x (row), y (col) to frontend CubeCoordinates
+						lastMoveCoords = xyToCube(lastAction.x, lastAction.y);
+						if (!lastMoveCoords) {
+							console.warn(
+								`Store: Could not convert backend last move x=${lastAction.x}, y=${lastAction.y} to CubeCoordinates.`
+							);
+						} else {
+							console.log(
+								`Store: Highlighting last move at Cube (${lastMoveCoords.q}, ${lastMoveCoords.r}, ${lastMoveCoords.s}) from backend XY (${lastAction.x}, ${lastAction.y})`
+							);
+						}
+					}
+				}
 
-        } catch (error) {
-             console.error("Store Error: Failed to process backend game state update:", error, "Data:", backendData);
-             set({ lastBackendError: "Failed to process game state from server." });
-        }
-    },
+				// Update the store state
+				set({
+					boardState: newBoardState,
+					playerTurn: currentPlayer,
+					winner: winnerPlayer, // Store 1, 2, or null
+					isDraw: isDraw, // Store draw state
+					// Use moves_history length for move count
+					moves: Array.isArray(backendData.moves_history)
+						? backendData.moves_history.length
+						: 0,
+					mode: backendData.mode ?? get().mode, // Update mode if provided
+					humanPlayerColor:
+						backendData.human_color ?? get().humanPlayerColor, // Update human color if provided
+					winProbability: backendData.win_probability ?? null, // Update win probability (handle null)
+					highlightedHexes: lastMoveCoords ? [lastMoveCoords] : [], // Highlight based on history
+					lastBackendError: null, // Clear previous errors on successful update
+					gameId: backendData.id
+						? String(backendData.id)
+						: get().gameId, // Update gameId if present (ensure string)
+				});
+				console.log("Store: State updated successfully.");
+			} catch (error) {
+				console.error(
+					"Store Error: Failed to process backend game state update:",
+					error,
+					"Data:",
+					backendData
+				);
+				set({
+					lastBackendError:
+						"Failed to process game state from server.",
+				});
+			}
+		},
 
-    /**
-     * Resets the store state to its initial values, preserving the sendMessage function.
-     */
-    resetLocalState: () => {
-        console.log("Store: Resetting local state.");
-        const currentSendMessage = get().sendMessage; // Preserve the sender function
-        set({ ...initialState, sendMessage: currentSendMessage });
-    },
+		// Handle error messages from the backend
+		handleErrorMessage: (errorData) => {
+			if (errorData && errorData.message) {
+				console.error(
+					"Store: Received error from backend:",
+					errorData.message
+				);
+				set({ lastBackendError: errorData.message });
+			} else {
+				console.error(
+					"Store: Received malformed error from backend:",
+					errorData
+				);
+				set({ lastBackendError: "Unknown error occurred." });
+			}
+		},
 
-    // --- Actions to trigger WS messages ---
+		/**
+		 * Resets the store state to its initial values, preserving the sendMessage and reconnect functions.
+		 */
+		resetLocalState: () => {
+			console.log("Store: Resetting local state.");
+			const currentSendMessage = get().sendMessage; // Preserve the sender function
+			const currentReconnect = get().reconnect; // Preserve the reconnect function
+			set({
+				...initialState,
+				sendMessage: currentSendMessage,
+				reconnect: currentReconnect,
+			});
+		},
 
-    /**
-     * Sends a 'move' action to the backend.
-     * @param coords - The CubeCoordinates of the hex the player clicked.
-     */
-    requestMove: (coords) => {
-        const { sendMessage, connectionState, winner, isDraw, boardState } = get();
+		// --- Message Queue Management ---
 
-        // Check if the move is allowed
-        if (connectionState !== WebSocketState.OPEN) {
-            console.warn("Store: Cannot send move - WebSocket not open.");
-            set({ lastBackendError: "Not connected to server." });
-            return;
-        }
-        if (winner !== null || isDraw) {
-            console.log("Store: Cannot send move - Game already over.");
-            set({ lastBackendError: "Game is already over." });
-            return;
-        }
-        // Check if the clicked hex is empty
-        const hexKey = cubeToKey(coords);
-        const currentHexState = boardState.get(hexKey);
-        if (currentHexState !== 0) {
-             console.log(`Store: Cannot send move - Hex (${coords.q}, ${coords.r}) is not empty (State: ${currentHexState}).`);
-             set({ lastBackendError: "You can only place a piece on an empty hex." });
-             return;
-        }
-        // TODO: Add frontend check for player's turn if desired (backend also validates)
+		enqueueMessage: (payload) => {
+			const messageQueue = [...get().messageQueue];
+			const newMessage: QueuedMessage = {
+				payload,
+				timestamp: Date.now(),
+				retries: 0,
+				id: createMessageId(),
+			};
 
-        // Convert frontend CubeCoordinates to backend XY format
-        const xy = cubeToXY(coords); // BOARD_SIZE is implicitly 11 here
+			messageQueue.push(newMessage);
+			set({ messageQueue });
 
-        if (xy) {
-            // Format the payload according to backend API
-            const payload = {
-                action: 'move',
-                x: xy.x, // Corresponds to frontend 'r' (row)
-                y: xy.y  // Corresponds to frontend 'q' (col)
-            };
-            console.log("Store: Sending 'move' action with payload:", payload);
-            sendMessage(payload);
-            // Clear any previous errors after attempting a valid move
-            set({ lastBackendError: null });
-        } else {
-            console.error(`Store Error: Invalid coordinates for move - Cube: q=${coords.q}, r=${coords.r}, s=${coords.s}. Could not convert to XY.`);
-            set({ lastBackendError: "Invalid move coordinates selected." });
-        }
-    },
+			// Try to process the queue immediately if connection is open
+			if (
+				get().connectionState === WebSocketState.OPEN &&
+				!get().isProcessingQueue
+			) {
+				get().processMessageQueue();
+			} else if (
+				get().connectionState !== WebSocketState.OPEN &&
+				get().connectionState !== WebSocketState.CONNECTING &&
+				get().connectionState !== WebSocketState.RECONNECTING &&
+				!get().reconnectInProgress
+			) {
+				// Try to reconnect if not already doing so
+				console.log(
+					"Store: Connection not open, attempting to reconnect..."
+				);
+				get().reconnect();
+			}
+		},
 
-    /**
-     * Sends an 'undo' action to the backend.
-     */
-    requestUndo: () => {
-        const { sendMessage, connectionState, winner, isDraw, moves } = get();
-        if (connectionState !== WebSocketState.OPEN) {
-             console.warn("Store: Cannot send undo - WebSocket not open.");
-             set({ lastBackendError: "Not connected to server." });
-             return;
-        }
-        if (winner !== null || isDraw) {
-             console.log("Store: Cannot send undo - Game already over.");
-             set({ lastBackendError: "Cannot undo, game is over." });
-             return;
-        }
-        if (moves === 0) {
-            console.log("Store: Cannot send undo - No moves made yet.");
-            set({ lastBackendError: "No moves to undo." });
-            return;
-        }
-        const payload = { action: 'undo' };
-        console.log("Store: Sending 'undo' action.");
-        sendMessage(payload);
-        set({ lastBackendError: null }); // Clear errors on request
-    },
+		processMessageQueue: () => {
+			const {
+				messageQueue,
+				connectionState,
+				sendMessage,
+				isProcessingQueue,
+			} = get();
 
-    /**
-     * Placeholder for 'redo' action (not in backend API doc).
-     */
-    requestRedo: () => {
-        console.warn("Store: Redo action not implemented/supported by backend API.");
-        set({ lastBackendError: "Redo action is not available." });
-    },
+			// Don't process if already processing or no messages or connection not open
+			if (
+				isProcessingQueue ||
+				messageQueue.length === 0 ||
+				connectionState !== WebSocketState.OPEN
+			) {
+				return;
+			}
 
-    /**
-     * Sends a 'restart' action to the backend.
-     */
-    requestRestart: () => {
-        const { sendMessage, connectionState } = get();
-        if (connectionState !== WebSocketState.OPEN) {
-             console.warn("Store: Cannot send restart - WebSocket not open.");
-              set({ lastBackendError: "Not connected to server." });
-             return;
-        }
-        const payload = { action: 'restart' };
-        console.log("Store: Sending 'restart' action.");
-        sendMessage(payload);
-        set({ lastBackendError: null }); // Clear errors on request
-    },
+			set({ isProcessingQueue: true });
 
-    /**
-     * Sends an 'ai_move' action to the backend.
-     * Primarily intended for AI vs AI mode or potentially specific scenarios in Human vs AI.
-     */
-    requestAiMove: () => {
-        const { sendMessage, connectionState, winner, isDraw } = get();
-        if (connectionState !== WebSocketState.OPEN) {
-             console.warn("Store: Cannot send ai_move - WebSocket not open.");
-             set({ lastBackendError: "Not connected to server." });
-             return;
-        }
-        if (winner !== null || isDraw) {
-             console.log("Store: Cannot send ai_move - Game already over.");
-             set({ lastBackendError: "Game is already over." });
-             return;
-        }
-        const payload = { action: 'ai_move' };
-        console.log("Store: Sending 'ai_move' action.");
-        sendMessage(payload);
-        set({ lastBackendError: null }); // Clear errors on request
-    },
+			// Process each message in the queue
+			const processQueue = async () => {
+				const currentQueue = [...get().messageQueue];
 
-}));
+				if (currentQueue.length === 0) {
+					set({ isProcessingQueue: false });
+					return;
+				}
+
+				const message = currentQueue[0];
+
+				// Check if message is too old (over 2 minutes)
+				const messageAge = Date.now() - message.timestamp;
+				if (messageAge > 120000) {
+					console.log(
+						`Store: Dropping old message (${messageAge}ms old):`,
+						message.payload
+					);
+					get().removeMessageFromQueue(message.id);
+					setTimeout(processQueue, 0);
+					return;
+				}
+
+				// Try to send the message
+				const success = sendMessage(message.payload);
+
+				if (success) {
+					console.log(
+						`Store: Successfully sent message:`,
+						message.payload
+					);
+					get().removeMessageFromQueue(message.id);
+					// Wait a short time before processing next message
+					setTimeout(processQueue, 100);
+				} else {
+					// Failed to send, increment retry count
+					message.retries++;
+
+					if (message.retries >= 3) {
+						console.error(
+							`Store: Failed to send message after ${message.retries} attempts, dropping:`,
+							message.payload
+						);
+						get().removeMessageFromQueue(message.id);
+					} else {
+						// Update the message in the queue
+						const updatedQueue = get().messageQueue.map((m) =>
+							m.id === message.id ? message : m
+						);
+						set({ messageQueue: updatedQueue });
+						console.log(
+							`Store: Failed to send message, will retry (attempt ${message.retries}/3):`,
+							message.payload
+						);
+					}
+
+					// Try again after a delay
+					setTimeout(processQueue, 1000);
+				}
+			};
+
+			// Start processing
+			processQueue();
+		},
+
+		removeMessageFromQueue: (id) => {
+			const updatedQueue = get().messageQueue.filter((m) => m.id !== id);
+			set({ messageQueue: updatedQueue });
+		},
+
+		// --- Actions to trigger WS messages ---
+
+		/**
+		 * Sends a 'move' action to the backend.
+		 * @param coords - The CubeCoordinates of the hex the player clicked.
+		 */
+		requestMove: (coords) => {
+			const { connectionState, winner, isDraw, boardState } = get();
+
+			// Check if the move is allowed based on game state
+			if (winner !== null || isDraw) {
+				console.warn("Store: Cannot make move - game is over.");
+				return;
+			}
+
+			// Convert cube coordinates to row, col (x, y) for the backend
+			const hexKey = cubeToKey(coords);
+			const currentState = boardState.get(hexKey);
+			if (currentState !== 0) {
+				console.warn(
+					`Store: Hex at (${coords.q}, ${coords.r}) is already occupied.`
+				);
+				return;
+			}
+
+			// Convert to backend coordinates
+			const xyCoords = cubeToXY(coords);
+			if (!xyCoords) {
+				console.error(
+					`Store: Failed to convert cube coordinates to XY coordinates.`
+				);
+				return;
+			}
+			const { x, y } = xyCoords;
+			const payload = { action: "move", x, y };
+
+			// Either send directly or enqueue
+			if (connectionState === WebSocketState.OPEN) {
+				console.log(
+					`Store: Requesting move at backend coordinates (${x}, ${y})`
+				);
+				const success = get().sendMessage(payload);
+				if (!success) {
+					console.warn(
+						"Store: Failed to send move request directly, enqueueing."
+					);
+					get().enqueueMessage(payload);
+				}
+			} else {
+				console.log(
+					`Store: WebSocket not open, enqueueing move request for (${x}, ${y})`
+				);
+				get().enqueueMessage(payload);
+			}
+		},
+
+		/**
+		 * Sends an 'undo' action to the backend.
+		 */
+		requestUndo: () => {
+			const payload = { action: "undo" };
+			if (get().connectionState === WebSocketState.OPEN) {
+				console.log("Store: Requesting undo");
+				const success = get().sendMessage(payload);
+				if (!success) get().enqueueMessage(payload);
+			} else {
+				console.log(
+					"Store: WebSocket not open, enqueueing undo request"
+				);
+				get().enqueueMessage(payload);
+			}
+		},
+
+		/**
+		 * Placeholder for 'redo' action (not implemented in backend API).
+		 */
+		requestRedo: () => {
+			console.warn(
+				"Store: Redo functionality not yet implemented in backend API."
+			);
+		},
+
+		/**
+		 * Sends a 'restart' action to the backend.
+		 */
+		requestRestart: () => {
+			const payload = { action: "restart" };
+			if (get().connectionState === WebSocketState.OPEN) {
+				console.log("Store: Requesting game restart");
+				const success = get().sendMessage(payload);
+				if (!success) get().enqueueMessage(payload);
+			} else {
+				console.log(
+					"Store: WebSocket not open, enqueueing restart request"
+				);
+				get().enqueueMessage(payload);
+			}
+		},
+
+		/**
+		 * Sends an 'ai_move' action to the backend.
+		 */
+		requestAiMove: () => {
+			const {
+				connectionState,
+				winner,
+				isDraw,
+				playerTurn,
+				humanPlayerColor,
+			} = get();
+
+			// Special check for AI moves: is it AI's turn? Game not over?
+			if (winner !== null || isDraw) {
+				console.warn("Store: Cannot request AI move - game is over.");
+				return;
+			}
+
+			const humanPlayerNumber =
+				humanPlayerColor === "red"
+					? 1
+					: humanPlayerColor === "blue"
+					? 2
+					: null;
+			const aiPlayerNumber =
+				humanPlayerNumber === 1
+					? 2
+					: humanPlayerNumber === 2
+					? 1
+					: null;
+
+			if (playerTurn !== aiPlayerNumber) {
+				console.warn(
+					`Store: Cannot request AI move - not AI's turn (Current turn: ${playerTurn}, AI: ${aiPlayerNumber}).`
+				);
+				return;
+			}
+
+			const payload = { action: "ai_move" };
+			if (connectionState === WebSocketState.OPEN) {
+				console.log("Store: Requesting AI move");
+				const success = get().sendMessage(payload);
+				if (!success) get().enqueueMessage(payload);
+			} else {
+				console.log(
+					"Store: WebSocket not open, enqueueing AI move request"
+				);
+				get().enqueueMessage(payload);
+			}
+		},
+	})
+);
 
 ```
 
@@ -12008,6 +13198,222 @@ export default config;
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]
 }
+
+```
+
+### <a id="hex_game_refactoring_plan-md"></a>hex_game_refactoring_plan.md
+
+```markdown
+## RL Hex Game - Incremental Refactoring Plan
+
+**Version:** 1.2
+**Date:** April 16, 2025
+
+### 1. Introduction
+
+This document outlines a prioritized, incremental plan for refactoring and improving the RL Hex Game project, updated based on clarifications regarding the RL code structure and correctness. It leverages the capabilities of the Cursor AI code editor, including its rule system (`.cursor/rules/`) and context-aware features (`@` file/rule referencing), to guide the process.
+
+### 2. Prerequisites
+
+* Cursor AI Code Editor installed and operational.
+* The RL Hex Game project codebase is open within Cursor.
+* The `.cursor/rules/` directory is populated with the defined project rule files (`project-overview.mdc`, `frontend-standards.mdc`, `backend-standards.mdc`, `api-guidelines.mdc`, `coordinate-system.mdc`, `rl-agent-interaction.mdc`, `refactoring-goals.mdc`). **Ensure these files have been updated to reflect the clarification that `Hexgame/utils/` contains the *currently active but partially incorrect* RL code, and `algorithm/` contains the *correct* implementations.**
+
+### 3. General Workflow
+
+Each refactoring step should generally follow this iterative process:
+
+1. **Define Task:** Clearly identify the specific goal for the current step based on the prioritized plan.
+2. **Select Context:** In Cursor Chat or using Cmd-K, use the `@` symbol to reference the relevant code files (`@path/to/your/file.ext`) and rule documents (`@./.cursor/rules/rule-name.mdc`) that provide necessary context for the task.
+3. **Prompt AI:** Formulate a clear, actionable prompt instructing the AI to perform the task (e.g., generate code, refactor, explain, identify issues) based on the provided context and relevant rules. Ask the AI to outline its plan first for complex changes.
+4. **Review & Iterate:** Carefully examine the AI's output (code, suggestions, explanations). Verify correctness, ensure adherence to project rules and standards, and check alignment with the refactoring goal. Use follow-up prompts to refine the output if necessary.
+5. **Test:** Implement or integrate the changes and perform thorough testing (unit tests, integration tests, manual testing as appropriate).
+6. **Commit:** Once a logical step or phase is completed and verified, commit the changes to version control with a clear commit message.
+
+### 4. Prioritized Refactoring Plan
+
+Execute the following phases and steps in the specified order.
+
+---
+
+**Phase 1: Stabilize Config & Prepare for RL Implementation Switch**
+
+* **Goal:** Fix critical configuration in the active RL code path (`Hexgame/utils/`) and ensure correct usage, preparing to switch to the proper implementations from `algorithm/`.
+* **Git Branch:** `git checkout -b refactor/stabilize-config-prepare-switch`
+
+    1. **Task: Make RL Model Path Configurable in `utils/` (Priority #1a)**
+        * **Context:** `@./backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py`, `@./backend/RL_Hex_game/Hex/Hex/settings.py`, `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py`, `@./.cursor/rules/backend-standards.mdc`, `@./.cursor/rules/rl-agent-interaction.mdc`, `@./.cursor/rules/refactoring-goals.mdc`
+        * **Example Prompt:**
+
+            ```
+            Objective: Implement Priority #1a from `@./.cursor/rules/refactoring-goals.mdc`.
+            Context: `@./backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py`, `@./backend/RL_Hex_game/Hex/Hex/settings.py`, `@./.cursor/rules/rl-agent-interaction.mdc`
+            Request: Refactor the `HexAI` class in `utils/Algorithm.py` to load the model path from a new Django setting `RL_MODEL_PATH` (add this setting definition to `settings.py`) instead of the current hardcoded path. Include error handling for missing setting/invalid path. Outline your steps first. Also, check if `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py` hardcodes the path and update it if necessary.
+            ```
+
+        * **Verification:** Add `RL_MODEL_PATH` to `settings.py`. Test AI move functionality relies on the setting using the `utils/Algorithm.py` code path.
+
+    2. **Task: Verify `consumers.py` Imports from `utils/` (Priority #1b)**
+        * **Context:** `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py`, `@./backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py`, `@./.cursor/rules/backend-standards.mdc`, `@./.cursor/rules/rl-agent-interaction.mdc`
+        * **Example Prompt:**
+
+            ```
+            Verify that `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py` currently imports `HexAI` and related components specifically from the `@./backend/RL_Hex_game/Hex/Hexgame/utils/` directory, as stated in `@./.cursor/rules/rl-agent-interaction.mdc`. List the relevant import statements.
+            ```
+
+        * **Verification:** Manually confirm the import paths in `consumers.py` point to `utils`.
+
+* **Version Control:**
+
+    ```bash
+    git add .
+    git commit -m "Phase 1: Make RL model path configurable targeting utils/"
+    ```
+
+---
+
+**Phase 2: Switch to Correct RL Implementation (`algorithm/`)**
+
+* **Goal:** Replace the incorrect/incomplete RL logic usage from `Hexgame/utils/` with the correct implementations from `algorithm/`, including MCTS with the specified parameters.
+* **Git Branch:** `git checkout -b feature/switch-to-algorithm-rl` (branch from Phase 1 completion)
+
+    1. **Task: Refactor Backend to Use `algorithm/` RL Code (Priority #2)**
+        * **Context:** `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py`, `@./backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py`, `@./backend/RL_Hex_game/algorithm/Algorithm.py`, `@./backend/RL_Hex_game/algorithm/GameLogic.py`, `@./backend/RL_Hex_game/algorithm/MCTS.py`, `@./backend/RL_Hex_game/algorithm/Hexmodel.py`, `@./.cursor/rules/backend-standards.mdc`, `@./.cursor/rules/rl-agent-interaction.mdc`, `@./.cursor/rules/refactoring-goals.mdc`
+        * **Example Prompt:**
+
+            ```
+            Objective: Implement Priority #2 from `@./.cursor/rules/refactoring-goals.mdc`. Switch the backend to use the correct RL implementations from the `algorithm/` directory.
+            Context: Relevant files from `consumers.py`, `utils/`, `algorithm/`, and rules `@./.cursor/rules/rl-agent-interaction.mdc`, `@./.cursor/rules/backend-standards.mdc`.
+            Request:
+            1. Outline the plan to modify `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py` and/or `@./backend/RL_Hex_game/Hex/Hexgame/utils/Algorithm.py` (or potentially replace `utils/Algorithm.py` entirely by having `consumers.py` use `algorithm/Algorithm.py`).
+            2. The goal is to ensure that for AI move prediction:
+                - The `HexGame` state is represented using `@./backend/RL_Hex_game/algorithm/GameLogic.py`.
+                - MCTS search is performed using `@./backend/RL_Hex_game/algorithm/MCTS.py`, initialized with `simulations=200`.
+                - The `HexNet` model used is from `@./backend/RL_Hex_game/algorithm/Hexmodel.py`.
+                - Imports are updated accordingly.
+            3. Propose the necessary code changes after I approve the plan.
+            ```
+
+        * **Verification:** Test `ai_move` extensively. Confirm MCTS is running (check logs/timing if possible). Assess AI performance. Ensure the configurable model path (from Phase 1) is still used correctly by the `algorithm/` code path.
+
+    2. **Task: Cleanup `utils/` RL Code (Priority #2c)**
+        * **Context:** `@./backend/RL_Hex_game/Hex/Hexgame/utils/`, `@./backend/RL_Hex_game/Hex/Hexgame/consumers.py`, Result of previous step.
+        * **Example Prompt:**
+
+            ```
+            Now that `consumers.py` has been refactored to use the RL implementations from the `algorithm/` directory, identify the RL-specific Python files (e.g., Algorithm.py, Hexmodel.py, MCTS.py, GameLogic.py if present) remaining in `@./backend/RL_Hex_game/Hex/Hexgame/utils/` that are now safe to delete. List the files for confirmation before deletion.
+            ```
+
+        * **Verification:** Delete the confirmed files. Ensure the application still runs correctly.
+
+* **Version Control:**
+
+    ```bash
+    git add .
+    git commit -m "Phase 2: Switch backend to use algorithm/ RL implementations (incl. MCTS)"
+    ```
+
+---
+
+**Phase 3: Frontend Structure & Decoupling**
+
+* **Goal:** Prepare the frontend for logic migration.
+* **Git Branch:** `git checkout -b feature/frontend-structure`
+
+    1. **Task: Refine UI Components, Add Tests & Mocks (Priority #3 - Initial)**
+        * **Context:** `@./hex-ai-frontend/src/components/`, `@./hex-ai-frontend/src/app/(app)/`, `@./.cursor/rules/frontend-standards.mdc`, `@./.cursor/rules/refactoring-goals.mdc`, `@./.cursor/rules/react_component_template.mdc`
+        * **Example Prompts:** (Same as previous plan)
+            * (Component Analysis): `Analyze components in @./hex-ai-frontend/src/components/hex/. Suggest opportunities for simplification or creating smaller, reusable sub-components according to @./.cursor/rules/frontend-standards.mdc.`
+            * (Test Structure): `Generate basic Jest/React Testing Library unit test structure for @./hex-ai-frontend/src/components/dashboard/NewGameOptions.tsx, covering button clicks and loading states, following goal #3 in @./.cursor/rules/refactoring-goals.mdc.`
+            * (Mock Interface): `Define a TypeScript type/interface for a mock API function simulating the fetch of the game list (planned in goal #5 of @./.cursor/rules/refactoring-goals.mdc).`
+        * **Verification:** Review structure. Implement tests. Define mocks.
+
+* **Version Control:**
+
+    ```bash
+    git add .
+    git commit -m "Phase 3: Refine frontend structure, add tests/mocks"
+    ```
+
+---
+
+**Phase 4: Major Logic Refactoring**
+
+* **Goal:** Move core game logic to the frontend.
+* **Git Branch:** `git checkout -b refactor/frontend-logic`
+
+    1. **Task: Move Core Game Logic to Frontend (Priority #4)**
+        * **Context:** `@./hex-ai-frontend/src/store/gameStore.ts`, `@./hex-ai-frontend/src/lib/`, `@./backend/RL_Hex_game/Hex/Hexgame/utils/utils.py` (Win logic reference ONLY), `@./.cursor/rules/frontend-standards.mdc`, `@./.cursor/rules/coordinate-system.mdc`, `@./.cursor/rules/refactoring-goals.mdc`
+        * **Example Prompts:** (Same as previous plan)
+            * (Validation - Edit `gameStore.ts`): `Refactor the 'requestMove' action. Before calling sendMessage, add validation to check if the target hex 'coords' is empty based on the current 'boardState'. If not empty, set an error state/log warning and return.`
+            * (Win Check - Chat): `Help create a function 'checkWinCondition' in @./hex-ai-frontend/src/lib/gameLogic.ts (create if needed). Implement the Hex win logic based on @./backend/RL_Hex_game/Hex/Hexgame/utils/utils.py's check_hex_connection (use this only as a reference for the logic, not for import), operating on the frontend's boardState Map and Cube coordinates. It should take boardState and player (1 or 2) and return boolean.`
+            * (Win Check Integration - Edit `gameStore.ts`): `In 'handleGameStateUpdate', after updating boardState, call the new 'checkWinCondition'. If true, update the 'winner' state.`
+        * **Verification:** Test frontend validation, win checks, undo/redo logic.
+
+* **Version Control:**
+
+    ```bash
+    git add .
+    git commit -m "Phase 4: Move core game logic (validation, win check) to frontend"
+    ```
+
+---
+
+**Phase 5: API Finalization & Frontend Integration**
+
+* **Goal:** Clean up backend APIs and connect the refined frontend.
+* **Git Branch:** `git checkout -b feature/api-finalization`
+
+    1. **Task: Refine API Strategy & Implement Game List API (Priority #5)**
+        * **Context:** `@./backend/RL_Hex_game/Hex/Hexgame/views.py`, `@./backend/RL_Hex_game/Hex/Hexgame/urls.py`, `@./backend/RL_Hex_game/Hex/Hexgame/serializers.py`, `@./.cursor/rules/api-guidelines.mdc`, `@./.cursor/rules/backend-standards.mdc`, `@./.cursor/rules/refactoring-goals.mdc`
+        * **Example Prompts:** (Same as previous plan)
+            * (Deprecation - Chat): `Based on goal #5 in @./.cursor/rules/refactoring-goals.mdc and @./.cursor/rules/api-guidelines.mdc, identify REST endpoints in @./backend/RL_Hex_game/Hex/Hexgame/views.py and urls.py for move, ai_move, undo, restart that can be deprecated/removed.`
+            * (New Endpoint - Chat): `Implement the GET /api/games/ endpoint in @./backend/RL_Hex_game/Hex/Hexgame/views.py as GameListView. Fetch all HexGame objects, serialize using HexGameSerializer (or a summary version), and return as JSON list. Register the URL.`
+        * **Verification:** Test new API. Ensure deprecated endpoints removed/disabled.
+
+    2. **Task: Final UI Integration (Priority #6 - Final)**
+        * **Context:** `@./hex-ai-frontend/src/components/dashboard/GameListTable.tsx`, `@./hex-ai-frontend/src/app/(app)/game/[gameId]/page.tsx`, `@./hex-ai-frontend/src/store/gameStore.ts`, `@./.cursor/rules/frontend-standards.mdc`
+        * **Example Prompts:** (Same as previous plan)
+            * (Fetch Integration - Edit `GameListTable.tsx`): `Refactor this component. Remove placeholder data. Add logic to fetch data from the new GET /api/games/ endpoint on mount and display the fetched games.`
+            * (Game Page Review - Chat): `Review @./hex-ai-frontend/src/app/(app)/game/[gameId]/page.tsx. Ensure it correctly uses state derived from the frontend game logic (Phase 4) and replaces mock API calls with actual gameStore actions connected to the backend.`
+        * **Verification:** Test dashboard list. Test end-to-end game flow.
+
+* **Version Control:**
+
+    ```bash
+    git add .
+    git commit -m "Phase 5: Finalize API strategy and integrate frontend logic"
+    # Optional: Merge branches if necessary
+    ```
+
+---
+
+### 5. Conclusion
+
+This updated plan prioritizes fixing configuration and switching to the correct RL implementations in `algorithm/` before proceeding with other major refactoring. Remember to commit frequently, test thoroughly, and always review the AI's output.
+
+```
+
+### <a id="---md"></a>进度.md
+
+```markdown
+- 4/16 17:52
+
+创建 project rules and user rules 
+
+prompt: 
+
+Based on the provided deep research report about Cursor's project and user rules, please help me create a project rules and user rules for the project.
+
+Firstly, analyze the report and make a plan on how to create the project rules and user rules. Which demo project will you use? How to utilize the RL hex game project's analysis to efficiently create the project rules and user rules? 
+
+Secondly, create the project rules and user rules for the project.
+
+Thirdly, create a demo project to test the project rules and user rules.
+
+Fourthly, iterate on the project rules and user rules based on the test results.
+
+
 
 ```
 

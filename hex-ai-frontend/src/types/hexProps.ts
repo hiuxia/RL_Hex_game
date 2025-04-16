@@ -52,54 +52,43 @@ export interface HexBoardProps {
  * Props for the GameInfo component.
  */
 export interface GameInfoProps {
-  /** Static metadata about the current game. */
-  gameMetadata: {
-    size: number;       // e.g., 11
-    created?: string;   // Optional: Date/time game started
-    moves?: number;     // Optional: Total moves made
-    // Add other relevant static info as needed
-  };
-  /** Optional CSS class name for additional styling. */
-  className?: string;
+	/** Static metadata about the current game. */
+	gameMetadata: {
+		size: number; // e.g., 11
+		created?: string; // Optional: Date/time game started
+		moves?: number; // Optional: Total moves made
+		mode?: "HUMAN_AI" | "AI_AI" | "HUMAN_HUMAN"; // Game mode
+		// Add other relevant static info as needed
+	};
+	/** Optional CSS class name for additional styling. */
+	className?: string;
 }
 
 /**
  * Props for the GameplayControls component.
  */
 export interface GameplayControlsProps {
-  /** The player whose turn it currently is (1 or 2), or 0/null if loading/over. */
-  playerTurn: number | null;
+	/** Optional CSS class name for additional styling. */
+	className?: string;
 
-  /** The winner of the game (1 or 2), or null if ongoing. */
-  winner: number | null;
+	/** Callback for undo action */
+	onUndo: () => void;
 
-  /** Flag indicating if the game ended in a draw. */
-  isDraw?: boolean;
+	/** Callback for restart action */
+	onRestart: () => void;
 
-  /** Callback function for the 'New Game' button (likely navigates to dashboard). */
-  onNewGameClick: () => void;
+	/** Callback for new game action */
+	onNewGame: () => void;
 
-  /** Optional callback function for an 'Undo' action. */
-  onUndoClick?: () => void;
+	/** Callback for requesting an AI move */
+	onRequestAiMove: () => void;
 
-  /** Optional callback function for a 'Redo' action. */
-  onRedoClick?: () => void; // Note: Backend might not support redo
+	/** Flag to disable undo button */
+	disableUndo: boolean;
 
-  /** Optional callback function for a 'Restart' action. */
-  onRestartClick?: () => void;
+	/** Flag to disable restart button */
+	disableRestart: boolean;
 
-  /** Optional callback function for a 'Resign' action (if implemented). */
-  onResignClick?: () => void;
-
-  /** Flag to enable/disable controls (e.g., during AI thinking or game over). */
-  isInteractionAllowed: boolean;
-
-  /** Flag indicating if the undo action is currently possible. */
-  canUndo?: boolean;
-
-  /** Flag indicating if the redo action is currently possible. */
-  canRedo?: boolean;
-
-  /** Optional CSS class name for additional styling. */
-  className?: string;
+	/** Flag to disable AI move request button */
+	disableRequestAiMove: boolean;
 }
