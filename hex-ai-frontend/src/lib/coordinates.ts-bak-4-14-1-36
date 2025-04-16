@@ -1,5 +1,6 @@
-import { CubeCoordinates } from '@/types/hexProps';
+import { CubeCoordinates } from '../types/hexProps';
 import { HEX_SIZE } from './constants'; // Import hex size
+
 
 /**
  * Converts Cube coordinates {q, r, s} to pixel coordinates {x, y} for pointy-top hexagons.
@@ -143,66 +144,4 @@ export function keyToCube(key: string): CubeCoordinates | null {
         return null; // Invalid key or doesn't satisfy constraint
     }
     return { q, r, s };
-}
-
-// --- Backend XY <-> Frontend Cube Conversion ---
-// ** CRITICAL: Verify & Update based on Backend **
-
-/**
- * Converts Frontend CubeCoordinates (q, r, s) to Backend XY coordinates (x, y).
- * **MUST** be updated to match the coordinate system used by the backend API.
- * The current implementation assumes the backend uses Axial coordinates (x=q, y=r).
- * Check backend code (e.g., consumers.py) to confirm how 'x' and 'y' are interpreted.
- *
- * @param coords Frontend CubeCoordinates.
- * @param boardSize The size of the board (e.g., 11).
- * @returns Object { x: number, y: number } or null if invalid/unconvertible.
- */
-export function cubeToXY(coords: CubeCoordinates, boardSize: number = 11): { x: number; y: number } | null {
-    // --- Active Implementation: Assuming Backend uses Axial x=q, y=r ---
-    // VERIFY THIS ASSUMPTION WITH YOUR BACKEND CODE.
-    const x_axial = coords.r;
-    const y_axial = coords.q;
-
-    // Validate if the resulting x, y are within the expected 0 to N-1 range.
-    if (x_axial >= 0 && x_axial < boardSize && y_axial >= 0 && y_axial < boardSize) {
-        return { x: x_axial, y: y_axial };
-    }
-
-    // --- Add other implementations (e.g., for Offset) below if needed, ---
-    // --- but only activate the one that matches the backend. ---
-
-    console.warn(`Cannot convert Cube coordinates (${coords.q}, ${coords.r}, ${coords.s}) to backend XY using the current implementation (Axial assumed). Verify backend coordinate system.`);
-    return null; // Conversion failed or coords out of range for the chosen system
-}
-
-/**
- * Converts Backend XY coordinates (x, y) received from the API to Frontend CubeCoordinates (q, r, s).
- * **MUST** be updated to match the coordinate system used by the backend API.
- * This **MUST** be the exact inverse of the chosen `cubeToXY` implementation.
- * The current implementation assumes the backend uses Axial coordinates (x=q, y=r).
- *
- * @param x Backend x coordinate (0-10).
- * @param y Backend y coordinate (0-10).
- * @returns CubeCoordinates object or null if input is invalid.
- */
-export function xyToCube(x: number, y: number): CubeCoordinates | null {
-     // Basic validation for backend coordinates
-     if (x === undefined || y === undefined || x < 0 || y < 0) {
-         console.warn(`Invalid backend XY coordinates received: x=${x}, y=${y}`);
-         return null;
-     }
-
-    // --- Active Implementation: Assuming Backend uses Axial x=q, y=r ---
-    // VERIFY THIS ASSUMPTION WITH YOUR BACKEND CODE.
-    const q_axial = y;
-    const r_axial = x;
-    const s_axial = -q_axial - r_axial; // Calculate s using the constraint q+r+s=0
-    return { q: q_axial, r: r_axial, s: s_axial };
-
-    // --- Add other implementations (e.g., for Offset) below if needed, ---
-    // --- but only activate the one that matches the backend. ---
-
-    // console.warn(`Cannot convert backend XY coordinates (${x}, ${y}) to Cube using the current implementation (Axial assumed). Verify backend coordinate system.`);
-    // return null; // If no valid conversion matches
 }

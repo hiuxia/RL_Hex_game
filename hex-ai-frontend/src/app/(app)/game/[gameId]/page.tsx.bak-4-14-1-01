@@ -1,0 +1,294 @@
+'use client';
+
+import React, { useReducer, useCallback } from 'react'; // Import useReducer
+import HexBoard from "@/components/hex/HexBoard";
+import GameInfo from "@/components/hex/GameInfo";
+import GameplayControls from "@/components/hex/GameplayControls";
+import { computeGridCoordinates, cubeToKey } from '@/lib/coordinates';
+import { CubeCoordinates, PlayerColors } from '@/types/hexProps';
+
+const BOARD_SIZE = 11;
+
+// --- Reducer Logic ---
+
+// 1. State Shape
+interface GameState {
+  boardState: Map<string, 0 | 1 | 2>;
+  playerTurn: 1 | 2;
+  moves: number;
+  highlightedHexes: CubeCoordinates[];
+  winner: number | null;
+  history: Omit<GameState, 'history'>[]; // History stores snapshots without nested history
+  currentMoveIndex: number; // Pointer within history
+}
+
+// 2. Action Types
+type GameAction =
+  | { type: 'MOVE'; payload: CubeCoordinates }
+  | { type: 'UNDO' }
+  | { type: 'REDO' }
+  | { type: 'NEW_GAME' }
+  | { type: 'RESIGN' };
+
+// Helper function to initialize the board state map
+const initializeBoardState = (size: number): Map<string, 0 | 1 | 2> => {
+  const state = new Map<string, 0 | 1 | 2>();
+  const initialCoords = computeGridCoordinates(size);
+  initialCoords.forEach(coords => {
+    state.set(cubeToKey(coords), 0);
+  });
+  return state;
+};
+
+// Initial game state constant (for reducer initialization and NEW_GAME)
+const getInitialState = (): GameState => {
+    const initialBoard = initializeBoardState(BOARD_SIZE);
+    // Snapshot of the state excluding the history array itself
+    const initialStateSnapshot: Omit<GameState, 'history'> = {
+        boardState: initialBoard,
+        playerTurn: 1,
+        moves: 0,
+        highlightedHexes: [],
+        winner: null,
+    };
+    // Full initial state including the history array starting with the snapshot
+    return {
+        ...initialStateSnapshot,
+        history: [initialStateSnapshot], // History starts with the initial state
+        currentMoveIndex: 0, // Pointing to the first (index 0) state in history
+    };
+};
+
+// 3. Reducer Function
+const gameReducer = (state: GameState, action: GameAction): GameState => {
+  console.log("Action:", action.type, "Current Index:", state.currentMoveIndex, "History Length:", state.history.length);
+
+  switch (action.type) {
+    case 'MOVE': {
+      const coords = action.payload;
+      const key = cubeToKey(coords);
+
+      // Ignore if game over or hex occupied
+      if (state.winner !== null || state.boardState.get(key) !== 0) {
+        console.log("Move ignored: game over or hex occupied.");
+        return state;
+      }
+
+      // Create the next state snapshot
+      const nextPlayerTurn = state.playerTurn === 1 ? 2 : 1;
+      const nextMoves = state.moves + 1;
+      const nextHighlightedHexes = [coords];
+      const newBoardStateMap = new Map(state.boardState);
+      newBoardStateMap.set(key, state.playerTurn);
+      // TODO: Check win condition here and set 'nextWinner' if applicable
+      const nextWinner = null; // Placeholder for win condition check result
+
+      const nextStateSnapshot: Omit<GameState, 'history'> = {
+        boardState: newBoardStateMap,
+        playerTurn: nextPlayerTurn,
+        moves: nextMoves,
+        highlightedHexes: nextHighlightedHexes,
+        winner: nextWinner,
+      };
+
+      // Update history: slice history up to current point, add new state
+      // This effectively removes any "redo" states if the user made a new move after undoing.
+      const newHistory = state.history.slice(0, state.currentMoveIndex + 1);
+      newHistory.push(nextStateSnapshot);
+      const newIndex = newHistory.length - 1; // New index points to the added state
+
+      console.log(`Player ${state.playerTurn} moved to:`, coords);
+      // Return the new state, including updated history and index
+      return {
+        ...nextStateSnapshot, // Update current state fields
+        history: newHistory,
+        currentMoveIndex: newIndex,
+      };
+    }
+
+    case 'UNDO': {
+      // Can only undo if the current index is greater than 0 (not the initial state)
+      if (state.currentMoveIndex <= 0) {
+        console.log("Cannot undo.");
+        return state;
+      }
+      const newIndex = state.currentMoveIndex - 1;
+      const previousStateSnapshot = state.history[newIndex]; // Get the previous state snapshot
+      console.log("Undoing move...");
+      // Return the previous state snapshot, keeping the history array but updating the index
+      return {
+        ...previousStateSnapshot, // Load previous state fields
+        history: state.history, // History itself doesn't change on undo
+        currentMoveIndex: newIndex, // Update the pointer
+      };
+    }
+
+    case 'REDO': {
+      // Can only redo if the current index is less than the last index in history
+      if (state.currentMoveIndex >= state.history.length - 1) {
+         console.log("Cannot redo.");
+        return state;
+      }
+      const newIndex = state.currentMoveIndex + 1;
+      const nextStateSnapshot = state.history[newIndex]; // Get the next state snapshot
+      console.log("Redoing move...");
+      // Return the next state snapshot, keeping the history array but updating the index
+      return {
+        ...nextStateSnapshot, // Load next state fields
+        history: state.history, // History itself doesn't change on redo
+        currentMoveIndex: newIndex, // Update the pointer
+      };
+    }
+
+    case 'NEW_GAME': {
+      console.log("New Game started via reducer");
+      return getInitialState(); // Return a completely fresh initial state
+    }
+
+    case 'RESIGN': {
+        if (state.winner !== null) {
+            console.log("Game already over (Resign action).");
+            return state; // Already resigned or won
+        }
+
+        const resigningPlayer = state.playerTurn;
+        const winningPlayer = resigningPlayer === 1 ? 2 : 1;
+        console.log(`Player ${resigningPlayer} resigning...`);
+
+        // Create final state snapshot based on current state but with winner set
+        const finalStateSnapshot: Omit<GameState, 'history'> = {
+            ...state.history[state.currentMoveIndex], // Get current snapshot from history
+            winner: winningPlayer, // Set the winner
+        };
+
+        // Update history (truncate future states if any, add final state)
+        const newHistory = state.history.slice(0, state.currentMoveIndex + 1);
+        newHistory.push(finalStateSnapshot);
+        const newIndex = newHistory.length - 1;
+
+        // Return the new state reflecting the resignation
+        return {
+            ...finalStateSnapshot,
+            history: newHistory,
+            currentMoveIndex: newIndex,
+        };
+    }
+
+    default:
+      // For unknown actions, return the current state unchanged
+      return state;
+  }
+};
+
+// --- Component ---
+
+export default function GamePage() { // Renamed component function
+  // Use the reducer hook to manage game state
+  const [gameState, dispatch] = useReducer(gameReducer, undefined, getInitialState);
+
+  // Destructure state for easier access
+  const {
+    boardState,
+    playerTurn,
+    moves,
+    highlightedHexes,
+    winner,
+    history, // Needed for canUndo/canRedo calculation
+    currentMoveIndex // Needed for canUndo/canRedo calculation
+  } = gameState;
+
+  // Derive flags based on the current state
+  const isInteractionAllowed = winner === null;
+  const canUndo = currentMoveIndex > 0;
+  const canRedo = currentMoveIndex < history.length - 1;
+
+  // --- Player Colors (Constant) ---
+  const playerColors: PlayerColors = {
+    p1: '#E53E3E', p2: '#3182CE', empty: '#F7FAFC', background: '#ffffff'
+  };
+
+  // --- Game Metadata (Derived) ---
+  const gameMetadata = { size: BOARD_SIZE, moves };
+
+  // --- Callback Handlers ---
+  // Dispatch actions instead of setting state directly
+  // Wrap in useCallback for potential performance optimization (though dispatch is stable)
+  const handleHexClick = useCallback((coords: CubeCoordinates) => {
+    dispatch({ type: 'MOVE', payload: coords });
+  }, [dispatch]);
+
+  const handleNewGame = useCallback(() => {
+    dispatch({ type: 'NEW_GAME' });
+  }, [dispatch]);
+
+  const handleUndo = useCallback(() => {
+    dispatch({ type: 'UNDO' });
+  }, [dispatch]);
+
+  const handleRedo = useCallback(() => {
+    dispatch({ type: 'REDO' });
+  }, [dispatch]);
+
+  const handleResign = useCallback(() => {
+    dispatch({ type: 'RESIGN' });
+    // Optionally show an alert here as well, although state change handles UI update
+    // alert(`Player ${playerTurn} resigned. Player ${playerTurn === 1 ? 2 : 1} wins!`);
+  }, [dispatch]); // Removed dependencies that are now handled by reducer state
+
+  // --- Panel/Container Styles (Constants) ---
+  const panelBgColor = "bg-white";
+  const panelShadow = "shadow-md";
+  // Note: containerBgColor/textColor are handled by the AppLayout now
+  // const containerBgColor = "bg-gray-100";
+  // const textColor = "text-gray-800";
+  const secondaryTextColor = "text-gray-600"; // Keep for panel text
+
+  return (
+    // The outer div with flex, h-full etc. is now handled by AppLayout
+    // This component renders the content *inside* the AppLayout's <main> area
+    <div className="flex h-full p-4 gap-4"> {/* Add padding/gap for content */}
+
+      {/* Left Column */}
+      {/* Use h-full to make it fill the vertical space provided by the parent flex container */}
+      <div className={`flex-grow flex items-center justify-center overflow-hidden p-2 ${panelBgColor} rounded-lg ${panelShadow} h-full`}>
+        <HexBoard
+          boardState={boardState}
+          playerColors={playerColors}
+          onHexClick={handleHexClick}
+          className="max-w-full max-h-full" // Ensure SVG scales within container
+          boardSize={BOARD_SIZE}
+          highlightedHexes={highlightedHexes}
+        />
+      </div>
+
+      {/* Right Column */}
+      {/* Use h-full to match height */}
+      <div className="w-1/3 flex-none flex flex-col gap-4 overflow-hidden h-full">
+        {/* Game Info Panel */}
+        <div className={`flex-none p-4 ${panelBgColor} rounded-lg ${panelShadow} overflow-y-auto`}>
+          <GameInfo
+            gameMetadata={gameMetadata}
+            className={`${secondaryTextColor}`}
+          />
+        </div>
+
+        {/* Gameplay Controls Panel */}
+        {/* Use flex-1 so it takes remaining space */}
+        <div className={`flex-1 min-h-0 p-4 ${panelBgColor} rounded-lg ${panelShadow} flex flex-col overflow-y-auto`}>
+          <GameplayControls
+            playerTurn={playerTurn}
+            winner={winner}
+            onNewGameClick={handleNewGame}
+            onUndoClick={handleUndo}
+            onRedoClick={handleRedo}
+            onResignClick={handleResign}
+            isInteractionAllowed={isInteractionAllowed}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            className={`${secondaryTextColor}`}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

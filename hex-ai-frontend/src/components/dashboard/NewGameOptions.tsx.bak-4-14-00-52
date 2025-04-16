@@ -1,0 +1,84 @@
+"use client"; // May need client component for handling options
+
+import React, { useState } from "react";
+import { useRouter } from "next/navigation"; // To redirect to new game
+
+// TODO: Define props if needed
+interface NewGameOptionsProps {}
+
+const NewGameOptions: React.FC<NewGameOptionsProps> = () => {
+	const router = useRouter();
+	// Example state for AI difficulty
+	const [aiDifficulty, setAiDifficulty] = useState<
+		"easy" | "medium" | "hard"
+	>("medium");
+
+	const handleStartHumanVsAi = () => {
+		console.log(`Starting Human vs AI game (Difficulty: ${aiDifficulty})`);
+		// TODO: Call backend API to create game (ws/game/new/)
+		// On success, redirect using the game_id from response
+		// Example redirect (replace 'new_game_id' with actual ID)
+		// router.push('/game/new_game_id');
+		alert(
+			`Starting Human vs AI game (Difficulty: ${aiDifficulty}) - API call needed.`
+		);
+	};
+
+	const handleStartAiVsAi = () => {
+		console.log("Starting AI vs AI game");
+		// TODO: Call backend API to create game
+		// On success, redirect
+		alert("Starting AI vs AI game - API call needed.");
+	};
+
+	return (
+		<div className="bg-white p-4 rounded-lg shadow">
+			<h3 className="text-lg font-semibold text-gray-800 mb-3 border-b pb-2">
+				Start New Game
+			</h3>
+			<div className="space-y-4">
+				{/* Human vs AI */}
+				<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+					<p className="text-gray-700">Play against the AI:</p>
+					<div className="flex items-center gap-2">
+						{/* Difficulty Selector (Example) */}
+						<select
+							value={aiDifficulty}
+							onChange={(e) =>
+								setAiDifficulty(
+									e.target.value as "easy" | "medium" | "hard"
+								)
+							}
+							className="block w-full sm:w-auto rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+						>
+							<option value="easy">Easy</option>
+							<option value="medium">Medium</option>
+							<option value="hard">Hard</option>
+						</select>
+						<button
+							onClick={handleStartHumanVsAi}
+							className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700 font-medium transition-colors text-sm"
+						>
+							Start vs AI
+						</button>
+					</div>
+				</div>
+
+				{/* AI vs AI */}
+				<div className="flex items-center justify-between gap-2">
+					<p className="text-gray-700">Watch AI vs AI:</p>
+					<button
+						onClick={handleStartAiVsAi}
+						className="px-4 py-2 rounded bg-purple-600 text-white hover:bg-purple-700 font-medium transition-colors text-sm"
+					>
+						Start AI Match
+					</button>
+				</div>
+
+				{/* Add Human vs Human later if needed */}
+			</div>
+		</div>
+	);
+};
+
+export default NewGameOptions;

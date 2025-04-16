@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import React, { useMemo, useRef, useCallback } from "react";
 import { HEX_SIZE } from "../../lib/constants";
@@ -10,7 +10,7 @@ import {
 	pixelToHex, // Import for later use
 	cubeRound, // Import for later use
 	cubeToKey,
-} from "../../lib/coordinates";
+} from "@/lib/coordinates";
 import {
 	HexBoardProps,
 	CubeCoordinates,
@@ -18,32 +18,51 @@ import {
 } from "../..//types/hexProps";
 
 // --- calculateViewBoxPrecise function remains the same ---
-const calculateViewBoxPrecise = (gridCoords: CubeCoordinates[], hexSize: number): string => {
-    if (gridCoords.length === 0) return '0 0 100 100';
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    gridCoords.forEach(coords => {
-        const center = cubeToPixelPointy(coords, hexSize);
-        const vertices = getHexagonVertices(center.x, center.y, hexSize);
-        vertices.forEach(vertex => {
-            minX = Math.min(minX, vertex.x);
-            minY = Math.min(minY, vertex.y);
-            maxX = Math.max(maxX, vertex.x);
-            maxY = Math.max(maxY, vertex.y);
-        });
-    });
-    const padding = hexSize * 0.5;
-    minX -= padding; minY -= padding; maxX += padding; maxY += padding;
-    const width = maxX - minX; const height = maxY - minY;
-    return `${minX.toFixed(3)} ${minY.toFixed(3)} ${width.toFixed(3)} ${height.toFixed(3)}`;
+const calculateViewBoxPrecise = (
+	gridCoords: CubeCoordinates[],
+	hexSize: number
+): string => {
+	if (gridCoords.length === 0) return "0 0 100 100";
+	let minX = Infinity,
+		minY = Infinity,
+		maxX = -Infinity,
+		maxY = -Infinity;
+	gridCoords.forEach((coords) => {
+		const center = cubeToPixelPointy(coords, hexSize);
+		const vertices = getHexagonVertices(center.x, center.y, hexSize);
+		vertices.forEach((vertex) => {
+			minX = Math.min(minX, vertex.x);
+			minY = Math.min(minY, vertex.y);
+			maxX = Math.max(maxX, vertex.x);
+			maxY = Math.max(maxY, vertex.y);
+		});
+	});
+	const padding = hexSize * 0.5;
+	minX -= padding;
+	minY -= padding;
+	maxX += padding;
+	maxY += padding;
+	const width = maxX - minX;
+	const height = maxY - minY;
+	return `${minX.toFixed(3)} ${minY.toFixed(3)} ${width.toFixed(
+		3
+	)} ${height.toFixed(3)}`;
 };
 
 // --- getFillColor function remains the same ---
-const getFillColor = (state: 0 | 1 | 2 | undefined, playerColors: PlayerColors): string => {
-    switch (state) {
-        case 1: return playerColors.p1;
-        case 2: return playerColors.p2;
-        case 0: default: return playerColors.empty;
-    }
+const getFillColor = (
+	state: 0 | 1 | 2 | undefined,
+	playerColors: PlayerColors
+): string => {
+	switch (state) {
+		case 1:
+			return playerColors.p1;
+		case 2:
+			return playerColors.p2;
+		case 0:
+		default:
+			return playerColors.empty;
+	}
 };
 
 // --- generateBorderPaths function remains the same ---
@@ -135,115 +154,199 @@ const generateBorderPaths = (
 	return pathData;
 };
 
-
 const HexBoard: React.FC<HexBoardProps> = ({
-  boardState,
-  playerColors,
-  onHexClick,
-  className,
-  boardSize,
-  highlightedHexes = [],
+	boardState,
+	playerColors,
+	onHexClick,
+	className,
+	boardSize,
+	highlightedHexes = [],
 }) => {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const gridCoords = useMemo(() => computeGridCoordinates(boardSize), [boardSize]);
-  const viewBox = useMemo(() => calculateViewBoxPrecise(gridCoords, HEX_SIZE), [gridCoords]);
-  const highlightedKeys = useMemo(() => new Set(highlightedHexes.map(cubeToKey)), [highlightedHexes]);
-  const borderPaths = useMemo(() => generateBorderPaths(boardSize, HEX_SIZE), [boardSize]);
+	const svgRef = useRef<SVGSVGElement>(null);
+	const gridCoords = useMemo(
+		() => computeGridCoordinates(boardSize),
+		[boardSize]
+	);
+	const viewBox = useMemo(
+		() => calculateViewBoxPrecise(gridCoords, HEX_SIZE),
+		[gridCoords]
+	);
+	const highlightedKeys = useMemo(
+		() => new Set(highlightedHexes.map(cubeToKey)),
+		[highlightedHexes]
+	);
+	const borderPaths = useMemo(
+		() => generateBorderPaths(boardSize, HEX_SIZE),
+		[boardSize]
+	);
 
-  // Store valid grid coordinate keys in a memoized Set for quick checking
-  const validKeys = useMemo(() => new Set(gridCoords.map(cubeToKey)), [gridCoords]);
+	// Store valid grid coordinate keys in a memoized Set for quick checking
+	const validKeys = useMemo(
+		() => new Set(gridCoords.map(cubeToKey)),
+		[gridCoords]
+	);
 
-  // --- Updated handleSvgClick with Accurate Pixel-to-Hex Logic ---
-  const handleSvgClick = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
-      // Ensure the SVG ref is available
-      if (!svgRef.current) {
-          console.error("SVG ref not available.");
-          return;
-      }
-      const svgElement = svgRef.current;
-      const svgRect = svgElement.getBoundingClientRect(); // Get SVG position and size on screen
-      const vb = svgElement.viewBox.baseVal; // Get the viewBox object
+	// --- Updated handleSvgClick with Accurate Pixel-to-Hex Logic ---
+	const handleSvgClick = useCallback(
+		(event: React.MouseEvent<SVGSVGElement>) => {
+			console.log("--- handleSvgClick (Custom Coords) ---");
+			if (!svgRef.current) {
+				console.error("SVG ref not available.");
+				return;
+			}
+			const svgElement = svgRef.current;
+			const svgRect = svgElement.getBoundingClientRect();
+			const vb = svgElement.viewBox.baseVal;
 
-      // Ensure viewBox and dimensions are available for calculation
-      if (!vb || svgRect.width === 0 || svgRect.height === 0) {
-          console.error("SVG dimensions or viewBox not available for click calculation.");
-          return;
-      }
+			if (!vb || svgRect.width === 0 || svgRect.height === 0) {
+				console.error("SVG dimensions or viewBox not available.");
+				return;
+			}
+			console.log(
+				`SVG Rect: { left: ${svgRect.left.toFixed(
+					2
+				)}, top: ${svgRect.top.toFixed(
+					2
+				)}, width: ${svgRect.width.toFixed(
+					2
+				)}, height: ${svgRect.height.toFixed(2)} }`
+			);
+			console.log(
+				`ViewBox: { x: ${vb.x.toFixed(2)}, y: ${vb.y.toFixed(
+					2
+				)}, width: ${vb.width.toFixed(2)}, height: ${vb.height.toFixed(
+					2
+				)} }`
+			);
+			const clickXRelative = event.clientX - svgRect.left;
+			const clickYRelative = event.clientY - svgRect.top;
+			console.log(
+				`Click Relative: { x: ${clickXRelative.toFixed(
+					2
+				)}, y: ${clickYRelative.toFixed(
+					2
+				)} } (Screen click: { clientX: ${event.clientX}, clientY: ${
+					event.clientY
+				} })`
+			);
+			const svgInternalX =
+				vb.x + (clickXRelative * vb.width / svgRect.width);
+			const svgInternalY =
+				vb.y + (clickYRelative * vb.height / svgRect.height);
+			console.log(
+				`SVG Internal Coords: { x: ${svgInternalX.toFixed(
+					3
+				)}, y: ${svgInternalY.toFixed(3)} }`
+			);
+			const fractionalHex = pixelToHex(
+				svgInternalX,
+				svgInternalY,
+				HEX_SIZE
+			); // Use custom function
+			console.log(
+				`Fractional Hex: { q: ${fractionalHex.q.toFixed(
+					3
+				)}, r: ${fractionalHex.r.toFixed(
+					3
+				)}, s: ${fractionalHex.s.toFixed(3)} }`
+			);
+			const clickedCubeCoords = cubeRound(fractionalHex); // Use custom function
+			console.log(
+				`Rounded Cube Coords: { q: ${clickedCubeCoords.q}, r: ${clickedCubeCoords.r}, s: ${clickedCubeCoords.s} }`
+			);
+			const clickedKey = cubeToKey(clickedCubeCoords);
+			if (validKeys.has(clickedKey)) {
+				console.log(
+					`VALID Click -> Calling onHexClick with: { q: ${clickedCubeCoords.q}, r: ${clickedCubeCoords.r}, s: ${clickedCubeCoords.s} }`
+				);
+				onHexClick(clickedCubeCoords);
+			} else {
+				console.log(
+					`INVALID Click - Outside valid hex grid area. Coords: { q: ${clickedCubeCoords.q}, r: ${clickedCubeCoords.r}, s: ${clickedCubeCoords.s} }`
+				);
+			}
+			console.log("--- handleSvgClick End ---");
+		},
+		[onHexClick, validKeys]
+	);
 
-      // 1. Calculate click coordinates relative to the SVG element's top-left corner
-      const clickXRelative = event.clientX - svgRect.left;
-      const clickYRelative = event.clientY - svgRect.top;
+	return (
+		<svg
+			ref={svgRef} // Assign the ref
+			viewBox={viewBox}
+			preserveAspectRatio="xMidYMid meet"
+			className={`w-full h-auto ${className || ""}`}
+			style={{ backgroundColor: playerColors.background }}
+			onClick={handleSvgClick} // Attach click handler
+		>
+			<g>
+				{" "}
+				{/* Group for Hexagons */}
+				{gridCoords.map((coords) => {
+					const center = cubeToPixelPointy(coords, HEX_SIZE);
+					const vertices = getHexagonVertices(
+						center.x,
+						center.y,
+						HEX_SIZE
+					);
+					const points = formatVerticesForSVG(vertices);
+					const key = cubeToKey(coords);
+					const hexState = boardState.get(key);
+					const fillColor = getFillColor(hexState, playerColors);
+					const isHighlighted = highlightedKeys.has(key);
+					const strokeColor = isHighlighted ? "black" : "#CBD5E0"; // gray-300
+					const strokeWidth = isHighlighted
+						? Math.max(1.5, 2.5 * (30 / HEX_SIZE))
+						: 1;
 
-      // 2. Transform relative click coordinates into the SVG's internal coordinate system
-      //    This accounts for scaling and the viewBox offset (vb.x, vb.y)
-      const svgInternalX = vb.x + (clickXRelative * vb.width / svgRect.width);
-      const svgInternalY = vb.y + (clickYRelative * vb.height / svgRect.height);
+					return (
+						<polygon
+							key={key}
+							// Remove data attributes, no longer needed for click handling
+							points={points}
+							fill={fillColor}
+							stroke={strokeColor}
+							strokeWidth={strokeWidth}
+							// Add pointer-events: none if clicks should only register on SVG background
+							// style={{ pointerEvents: 'none' }}
+							className="cursor-pointer transition-opacity duration-150 hover:opacity-80"
+						/>
+					);
+				})}
+			</g>
 
-      // 3. Convert the internal SVG coordinates to fractional hex coordinates
-      const fractionalHex = pixelToHex(svgInternalX, svgInternalY, HEX_SIZE);
-
-      // 4. Round the fractional coordinates to the nearest valid integer hex coordinates
-      const clickedCubeCoords = cubeRound(fractionalHex);
-
-      // 5. Validate and call the prop function
-      const clickedKey = cubeToKey(clickedCubeCoords);
-      // Check if the rounded coordinates correspond to a valid hex on the board
-      if (validKeys.has(clickedKey)) {
-          console.log("Clicked Hex (Pixel Calculation):", clickedCubeCoords);
-          onHexClick(clickedCubeCoords); // Call the prop function with the accurately calculated coordinates
-      } else {
-          console.log("Clicked outside valid hex grid area (Pixel Calculation). Coords:", clickedCubeCoords);
-          // Optionally handle clicks outside the grid (e.g., do nothing, deselect)
-      }
-
-  }, [onHexClick, validKeys]); // Dependencies: onHexClick callback and the set of valid keys
-
-  return (
-    <svg
-      ref={svgRef} // Assign the ref
-      viewBox={viewBox}
-      preserveAspectRatio="xMidYMid meet"
-      className={`w-full h-auto ${className || ''}`}
-      style={{ backgroundColor: playerColors.background }}
-      onClick={handleSvgClick} // Attach click handler
-    >
-      <g> {/* Group for Hexagons */}
-        {gridCoords.map(coords => {
-          const center = cubeToPixelPointy(coords, HEX_SIZE);
-          const vertices = getHexagonVertices(center.x, center.y, HEX_SIZE);
-          const points = formatVerticesForSVG(vertices);
-          const key = cubeToKey(coords);
-          const hexState = boardState.get(key);
-          const fillColor = getFillColor(hexState, playerColors);
-          const isHighlighted = highlightedKeys.has(key);
-          const strokeColor = isHighlighted ? 'black' : '#CBD5E0'; // gray-300
-          const strokeWidth = isHighlighted ? Math.max(1.5, 2.5 * (30 / HEX_SIZE)) : 1;
-
-          return (
-            <polygon
-              key={key}
-              // Remove data attributes, no longer needed for click handling
-              points={points}
-              fill={fillColor}
-              stroke={strokeColor}
-              strokeWidth={strokeWidth}
-              // Add pointer-events: none if clicks should only register on SVG background
-              // style={{ pointerEvents: 'none' }}
-              className="cursor-pointer transition-opacity duration-150 hover:opacity-80"
-            />
-          );
-        })}
-      </g>
-
-       {/* Render Border Paths */}
-       <g strokeLinecap="round" strokeLinejoin="round" fill="none" style={{ pointerEvents: 'none' }}> {/* Make borders non-interactive */}
-            <path d={borderPaths.p1Top} stroke={playerColors.p1} strokeWidth={HEX_SIZE * 0.15} />
-            <path d={borderPaths.p1Bottom} stroke={playerColors.p1} strokeWidth={HEX_SIZE * 0.15} />
-            <path d={borderPaths.p2Left} stroke={playerColors.p2} strokeWidth={HEX_SIZE * 0.15} />
-            <path d={borderPaths.p2Right} stroke={playerColors.p2} strokeWidth={HEX_SIZE * 0.15} />
-       </g>
-    </svg>
-  );
+			{/* Render Border Paths */}
+			<g
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				fill="none"
+				style={{ pointerEvents: "none" }}
+			>
+				{" "}
+				{/* Make borders non-interactive */}
+				<path
+					d={borderPaths.p1Top}
+					stroke={playerColors.p1}
+					strokeWidth={HEX_SIZE * 0.15}
+				/>
+				<path
+					d={borderPaths.p1Bottom}
+					stroke={playerColors.p1}
+					strokeWidth={HEX_SIZE * 0.15}
+				/>
+				<path
+					d={borderPaths.p2Left}
+					stroke={playerColors.p2}
+					strokeWidth={HEX_SIZE * 0.15}
+				/>
+				<path
+					d={borderPaths.p2Right}
+					stroke={playerColors.p2}
+					strokeWidth={HEX_SIZE * 0.15}
+				/>
+			</g>
+		</svg>
+	);
 };
 
 export default HexBoard;

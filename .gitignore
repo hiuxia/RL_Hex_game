@@ -112,3 +112,8 @@ cdk.out/
 .eslintcache
 .yarn-integrity
 .cache/
+
+# scripts
+*.pdf
+repo2pdf.js
+repo2pdf.md

@@ -1,3 +1,5 @@
+// src/types/hexProps.ts
+
 /**
  * Type definitions for Hex game properties.
  */
@@ -17,8 +19,8 @@ export interface CubeCoordinates {
  * Colors can be hex codes, Tailwind class names, or CSS color keywords.
  */
 export interface PlayerColors {
-  p1: string;       // Color for Player 1
-  p2: string;       // Color for Player 2
+  p1: string;       // Color for Player 1 (Red)
+  p2: string;       // Color for Player 2 (Blue)
   empty: string;    // Color for empty hex tiles
   background: string; // Background color for the SVG canvas
 }
@@ -27,18 +29,8 @@ export interface PlayerColors {
  * Props for the HexBoard component.
  */
 export interface HexBoardProps {
-  /**
-   * 2D array representing the state of each hex tile on the board.
-   * The mapping from array indices (row, col) to CubeCoordinates needs
-   * to be handled internally or during generation.
-   * Values typically: 0 (empty), 1 (Player 1), 2 (Player 2).
-   *
-   * NOTE: For an 11x11 grid, this might be simplified later to directly use
-   * a Map or object keyed by stringified CubeCoordinates for easier lookup.
-   * For now, we assume a mapping function exists or the boardState
-   * is pre-processed to be easily accessible by CubeCoordinates.
-   */
-  boardState: Map<string, 0 | 1 | 2>; // Using a Map keyed by "q,r,s" string
+  /** Map representing the state of each hex tile. Key: "q,r,s", Value: 0 (empty), 1 (P1), 2 (P2). */
+  boardState: Map<string, 0 | 1 | 2>;
 
   /** Color definitions for players and board elements. */
   playerColors: PlayerColors;
@@ -75,25 +67,39 @@ export interface GameInfoProps {
  * Props for the GameplayControls component.
  */
 export interface GameplayControlsProps {
-  /** The player whose turn it currently is (1 or 2). */
-  playerTurn: number;
+  /** The player whose turn it currently is (1 or 2), or 0/null if loading/over. */
+  playerTurn: number | null;
 
   /** The winner of the game (1 or 2), or null if ongoing. */
   winner: number | null;
 
-  /** Callback function for the 'New Game' button. */
+  /** Flag indicating if the game ended in a draw. */
+  isDraw?: boolean;
+
+  /** Callback function for the 'New Game' button (likely navigates to dashboard). */
   onNewGameClick: () => void;
 
   /** Optional callback function for an 'Undo' action. */
   onUndoClick?: () => void;
 
-  /** Optional callback function for a 'Resign' action. */
+  /** Optional callback function for a 'Redo' action. */
+  onRedoClick?: () => void; // Note: Backend might not support redo
+
+  /** Optional callback function for a 'Restart' action. */
+  onRestartClick?: () => void;
+
+  /** Optional callback function for a 'Resign' action (if implemented). */
   onResignClick?: () => void;
 
   /** Flag to enable/disable controls (e.g., during AI thinking or game over). */
   isInteractionAllowed: boolean;
 
+  /** Flag indicating if the undo action is currently possible. */
+  canUndo?: boolean;
+
+  /** Flag indicating if the redo action is currently possible. */
+  canRedo?: boolean;
+
   /** Optional CSS class name for additional styling. */
   className?: string;
 }
-
