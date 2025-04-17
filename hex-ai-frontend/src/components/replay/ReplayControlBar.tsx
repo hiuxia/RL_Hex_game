@@ -9,12 +9,9 @@ import {
 	BackwardIcon,
 	ArrowUturnLeftIcon,
 	ArrowUturnRightIcon,
-	StopIcon,
-	PlayPauseIcon,
 } from "@heroicons/react/20/solid";
 
 interface ReplayControlBarProps {
-	rel;
 	currentMove: number;
 	totalMoves: number;
 	isPlaying: boolean;

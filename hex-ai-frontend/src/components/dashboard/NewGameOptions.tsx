@@ -89,6 +89,9 @@ const NewGameOptions: React.FC<NewGameOptionsProps> = () => {
 						: "An unexpected error occurred during game creation.";
 				setError(errorMessage);
 				setIsLoading(false);
+			} finally {
+				// Reset loading state if not navigating away
+				setIsLoading(false);
 			}
 		},
 		[router] // Add router to dependency array

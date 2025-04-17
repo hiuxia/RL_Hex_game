@@ -1,8 +1,7 @@
 "use client"; // Needed for state and effects
 
 import React, { useState, useEffect, useCallback } from "react";
-// Remove unused import
-// import { usePathname } from "next/navigation";
+import { useParams } from "next/navigation";
 
 // Import Game Components (assuming they are client components or compatible)
 import HexBoard from "@/components/hex/HexBoard";
@@ -14,6 +13,8 @@ import { CubeCoordinates, PlayerColors } from "@/types/hexProps";
 import { computeGridCoordinates, cubeToKey, xyToCube } from "@/lib/coordinates";
 
 const BOARD_SIZE = 11; // Assuming standard size
+const API_BASE_URL =
+	process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
 // Define structure for a single move in the history
 interface ReplayMove {
@@ -61,8 +62,20 @@ const getBoardStateAtMove = (
 	return board;
 };
 
-export default function ReplayPage({ params }: { params: { gameId: string } }) {
-	const gameId = params.gameId;
+// Helper function to initialize an empty board state
+const initializeBoardState = (size: number): Map<string, 0 | 1 | 2> => {
+	const state = new Map<string, 0 | 1 | 2>();
+	const initialCoords = computeGridCoordinates(size);
+	initialCoords.forEach((coords) => {
+		state.set(cubeToKey(coords), 0); // 0 represents an empty hex
+	});
+	return state;
+};
+
+export default function ReplayPage() {
+	// Use the useParams hook from next/navigation
+	const params = useParams();
+	const gameId = params?.gameId as string;
 
 	// --- State for Replay ---
 	const [replayData, setReplayData] = useState<ReplayGameData | null>(null);
@@ -76,11 +89,17 @@ export default function ReplayPage({ params }: { params: { gameId: string } }) {
 
 	// --- Fetch Replay Data ---
 	useEffect(() => {
+		if (!gameId) {
+			setError("Game ID is missing");
+			setIsLoading(false);
+			return;
+		}
+
 		setIsLoading(true);
 		setError(null);
 		console.log(`Fetching replay data for game ID: ${gameId}`);
 
-		fetch(`/games/${gameId}/`)
+		fetch(`${API_BASE_URL}/api/games/${gameId}/`)
 			.then((res) => {
 				if (!res.ok) {
 					throw new Error(
@@ -90,6 +109,9 @@ export default function ReplayPage({ params }: { params: { gameId: string } }) {
 				return res.json();
 			})
 			.then((data: BackendGameResponse) => {
+				// Debug the format of moves_history
+				console.log("Backend moves_history:", data.moves_history);
+
 				// Convert backend data to our frontend format
 				const convertedMoves: ReplayMove[] = data.moves_history
 					.map((moveData, index) => {
@@ -324,7 +346,6 @@ export default function ReplayPage({ params }: { params: { gameId: string } }) {
 						onGoToStart={handleGoToStart}
 						onGoToEnd={handleGoToEnd}
 						onSeek={handleSeek}
-						rel="noopener" // Add the required prop
 					/>
 				</div>
 
@@ -358,13 +379,3 @@ export default function ReplayPage({ params }: { params: { gameId: string } }) {
 		</div>
 	);
 }
-
-// Helper to initialize board state (can be moved to utils)
-const initializeBoardState = (size: number): Map<string, 0 | 1 | 2> => {
-	const state = new Map<string, 0 | 1 | 2>();
-	const initialCoords = computeGridCoordinates(size);
-	initialCoords.forEach((coords) => {
-		state.set(cubeToKey(coords), 0);
-	});
-	return state;
-};
