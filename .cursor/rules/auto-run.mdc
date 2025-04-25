@@ -1,7 +1,0 @@
----
-description: 
-globs: 
-alwaysApply: true
----
-1. Don't use any terminal command. output at last and I will run it.
-2. Don't fix any linter error.
