@@ -2,8 +2,8 @@ const fs = require("fs");
 const path = require("path");
 
 // Configuration
-const rootDir = "./";
-const outputMdPath = "./repo2pdf.md";
+const rootDir = "./hex-ai-frontend";
+const outputMdPath = "./hex-ai-frontend/repo2pdf.md";
 const fileTypesToInclude = [
 	".py",
 	".js",

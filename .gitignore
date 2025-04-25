@@ -115,3 +115,32 @@ cdk.out/
 
 # scripts
 *.pdf
+repo2pdf.*
+*.sh
+PROJECT_*.md
+
+# database
+*.db
+*.sqlite
+*.sqlite3
+*.db.zip
+
+# migrations
+migrations/
+
+# models
+*.pth
+!model2000.pth
+
+# cursor
+.cursor/
+
+# fonts
+*.ttf
+
+# plan files
+*.md
+!README.md
+
+# env files
+.env
